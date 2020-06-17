@@ -412,20 +412,21 @@ namespace ORB_SLAM2
     int ORBmatcher::SearchForInitialization(
         Frame &F1,                          // 初始化第一帧
         Frame &F2,                          // 初始化第二帧
-        vector<cv::Point2f> &vbPrevMatched, // 第一帧关键点
+        vector<cv::Point2f> &vbPrevMatched, // 输入时是第一帧关键点，输出时是第二帧关键点
         vector<int> &vnMatches12,           // 一二帧间匹配
         int windowSize)                     // 窗口大小 =100
     {
         int nmatches = 0;
-        vnMatches12 = vector<int>(F1.mvKeysUn.size(), -1); // 初始化 matches12 的大小
+        vnMatches12 = vector<int>(F1.mvKeysUn.size(), -1); // F1 各关键点最近的 F2关键点
 
-        vector<int> rotHist[HISTO_LENGTH]; //30 长的数组，储存int vector
+        //30 长的数组，储存int vector，方向差 的直方图，30个bin, bin 中存 F1 的keypoint id
+        vector<int> rotHist[HISTO_LENGTH];
         for (int i = 0; i < HISTO_LENGTH; i++)
             rotHist[i].reserve(500);              // 每个vector预分配500长度
         const float factor = 1.0f / HISTO_LENGTH; // =1/30
 
         vector<int> vMatchedDistance(F2.mvKeysUn.size(), INT_MAX);
-        vector<int> vnMatches21(F2.mvKeysUn.size(), -1);
+        vector<int> vnMatches21(F2.mvKeysUn.size(), -1); // F2 各关键点最近的 F1关键点
 
         // 遍历 Frame1 关键点
         for (size_t i1 = 0, iend1 = F1.mvKeysUn.size(); i1 < iend1; i1++)
@@ -467,7 +468,7 @@ namespace ORB_SLAM2
                 {
                     bestDist2 = bestDist; // 第二好的距离
                     bestDist = dist;      // 最好的距离
-                    bestIdx2 = i2; // F2最好匹配点的 id
+                    bestIdx2 = i2;        // F2最好匹配点的 id
                 }
                 // 如果比第二好的好
                 else if (dist < bestDist2)
@@ -492,7 +493,7 @@ namespace ORB_SLAM2
                     vMatchedDistance[bestIdx2] = bestDist;
                     nmatches++;
 
-                    if (mbCheckOrientation)
+                    if (mbCheckOrientation) // 更新方向差值直方图
                     {
                         float rot = F1.mvKeysUn[i1].angle - F2.mvKeysUn[bestIdx2].angle;
                         if (rot < 0.0)
@@ -505,20 +506,25 @@ namespace ORB_SLAM2
                     }
                 }
             }
-        }
+        } //完成 遍历 Frame1 关键点
 
+        // 依据旋转直方图删除不好的匹配
         if (mbCheckOrientation)
         {
             int ind1 = -1;
             int ind2 = -1;
             int ind3 = -1;
 
+            // 取出3个最大的bin 的id，最大就是 vector 最长
             ComputeThreeMaxima(rotHist, HISTO_LENGTH, ind1, ind2, ind3);
 
+            // 这里认为前三大的bin 中的匹配是好的匹配，删除剩下的匹配
+            // 遍历所有 bin
             for (int i = 0; i < HISTO_LENGTH; i++)
             {
                 if (i == ind1 || i == ind2 || i == ind3)
                     continue;
+                // 遍历剩下 bin 中左右 F1 的keypoint id
                 for (size_t j = 0, jend = rotHist[i].size(); j < jend; j++)
                 {
                     int idx1 = rotHist[i][j];

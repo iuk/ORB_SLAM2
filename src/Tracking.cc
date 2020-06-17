@@ -624,6 +624,7 @@ namespace ORB_SLAM2
                 mInitialFrame, mCurrentFrame, mvbPrevMatched, mvIniMatches, 100);
 
             // Check if there are enough correspondences
+            // 如果两帧之间没那么多匹配，则本次初始化失败
             if (nmatches < 100)
             {
                 delete mpInitializer;
@@ -635,8 +636,11 @@ namespace ORB_SLAM2
             cv::Mat tcw;                 // Current Camera Translation
             vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
-            if (mpInitializer->Initialize(mCurrentFrame, mvIniMatches, Rcw, tcw, mvIniP3D, vbTriangulated))
+            // 步骤5：通过H模型或F模型进行单目初始化，得到两帧间相对运动、初始MapPoints
+            if (mpInitializer->Initialize(mCurrentFrame, mvIniMatches,
+                                          Rcw, tcw, mvIniP3D, vbTriangulated))
             {
+                // 步骤6：删除那些无法进行三角化的匹配点
                 for (size_t i = 0, iend = mvIniMatches.size(); i < iend; i++)
                 {
                     if (mvIniMatches[i] >= 0 && !vbTriangulated[i])
@@ -647,12 +651,18 @@ namespace ORB_SLAM2
                 }
 
                 // Set Frame Poses
+                // 将初始化的第一帧作为世界坐标系，因此第一帧变换矩阵为单位矩阵
                 mInitialFrame.SetPose(cv::Mat::eye(4, 4, CV_32F));
+                // 由Rcw和tcw构造Tcw,并赋值给mTcw，mTcw为世界坐标系到该帧的变换矩阵
                 cv::Mat Tcw = cv::Mat::eye(4, 4, CV_32F);
                 Rcw.copyTo(Tcw.rowRange(0, 3).colRange(0, 3));
                 tcw.copyTo(Tcw.rowRange(0, 3).col(3));
                 mCurrentFrame.SetPose(Tcw);
 
+                // 步骤6：将三角化得到的3D点包装成MapPoints
+                // Initialize函数会得到mvIniP3D，
+                // mvIniP3D是cv::Point3f类型的一个容器，是个存放3D点的临时变量，
+                // CreateInitialMapMonocular将3D点包装成MapPoint类型存入KeyFrame和Map中
                 CreateInitialMapMonocular();
             }
         }
