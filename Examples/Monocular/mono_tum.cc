@@ -18,17 +18,13 @@
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<chrono>
-#include<unistd.h>
-
-#include<opencv2/core/core.hpp>
-
-#include<System.h>
-
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <chrono>
+#include <unistd.h>
+#include <opencv2/core/core.hpp>
+#include <System.h>
 using namespace std;
 
 void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
@@ -36,22 +32,23 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames,
 
 int main(int argc, char **argv)
 {
-    if(argc != 4)
+    if (argc != 4)
     {
-        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings path_to_sequence" << endl;
+        cerr << endl
+             << "Usage: ./mono_tum path_to_vocabulary path_to_settings path_to_sequence" << endl;
         return 1;
     }
 
     // Retrieve paths to images
-    vector<string> vstrImageFilenames;
-    vector<double> vTimestamps;
-    string strFile = string(argv[3])+"/rgb.txt";
+    vector<string> vstrImageFilenames; // 存照片文件名
+    vector<double> vTimestamps;        // 存文件对应时间戳
+    string strFile = string(argv[3]) + "/rgb.txt";
     LoadImages(strFile, vstrImageFilenames, vTimestamps);
 
-    int nImages = vstrImageFilenames.size();
+    int nImages = vstrImageFilenames.size(); // 多少张照片
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR,true);
+    ORB_SLAM2::System SLAM(argv[1], argv[2], ORB_SLAM2::System::MONOCULAR, true);
 
     // Vector for tracking time statistics
     vector<float> vTimesTrack;
@@ -63,52 +60,53 @@ int main(int argc, char **argv)
 
     // Main loop
     int main_error = 0;
-    std::thread runthread([&]() {  // Start in new thread
-    cv::Mat im;
-    for(int ni=0; ni<nImages; ni++)
-    {
-        // Read image from file
-        im = cv::imread(string(argv[3])+"/"+vstrImageFilenames[ni],CV_LOAD_IMAGE_UNCHANGED);
-        double tframe = vTimestamps[ni];
-
-        if(im.empty())
+    std::thread runthread([&]() { // Start in new thread
+        cv::Mat im;
+        for (int ni = 0; ni < nImages; ni++)
         {
-            cerr << endl << "Failed to load image at: "
-                 << string(argv[3]) << "/" << vstrImageFilenames[ni] << endl;
-            main_error = 1;
-            return;
+            // Read image from file
+            im = cv::imread(string(argv[3]) + "/" + vstrImageFilenames[ni], CV_LOAD_IMAGE_UNCHANGED);
+            double tframe = vTimestamps[ni];
+
+            if (im.empty())
+            {
+                cerr << endl
+                     << "Failed to load image at: "
+                     << string(argv[3]) << "/" << vstrImageFilenames[ni] << endl;
+                main_error = 1;
+                return;
+            }
+
+#ifdef COMPILEDWITHC11
+            std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+#else
+            std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
+#endif
+
+            // Pass the image to the SLAM system
+            SLAM.TrackMonocular(im, tframe);
+
+#ifdef COMPILEDWITHC11
+            std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
+#else
+            std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
+#endif
+
+            double ttrack = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1).count();
+
+            vTimesTrack[ni] = ttrack;
+
+            // Wait to load the next frame
+            double T = 0;
+            if (ni < nImages - 1)
+                T = vTimestamps[ni + 1] - tframe;
+            else if (ni > 0)
+                T = tframe - vTimestamps[ni - 1];
+
+            if (ttrack < T)
+                usleep((T - ttrack) * 1e6);
         }
-
-#ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
-#else
-        std::chrono::monotonic_clock::time_point t1 = std::chrono::monotonic_clock::now();
-#endif
-
-        // Pass the image to the SLAM system
-        SLAM.TrackMonocular(im,tframe);
-
-#ifdef COMPILEDWITHC11
-        std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
-#else
-        std::chrono::monotonic_clock::time_point t2 = std::chrono::monotonic_clock::now();
-#endif
-
-        double ttrack= std::chrono::duration_cast<std::chrono::duration<double> >(t2 - t1).count();
-
-        vTimesTrack[ni]=ttrack;
-
-        // Wait to load the next frame
-        double T=0;
-        if(ni<nImages-1)
-            T = vTimestamps[ni+1]-tframe;
-        else if(ni>0)
-            T = tframe-vTimestamps[ni-1];
-
-        if(ttrack<T)
-            usleep((T-ttrack)*1e6);
-    }
-    // SLAM.Shutdown();
+        // SLAM.Shutdown();
     }); // End the thread
 
     // Start the visualization thread
@@ -116,6 +114,7 @@ int main(int argc, char **argv)
 
     cout << "Viewer started, waiting for thread." << endl;
     runthread.join();
+
     if (main_error != 0)
         return main_error;
     cout << "Tracking thread joined..." << endl;
@@ -125,15 +124,16 @@ int main(int argc, char **argv)
     cout << "System Shutdown" << endl;
 
     // Tracking time statistics
-    sort(vTimesTrack.begin(),vTimesTrack.end());
+    sort(vTimesTrack.begin(), vTimesTrack.end());
     float totaltime = 0;
-    for(int ni=0; ni<nImages; ni++)
+    for (int ni = 0; ni < nImages; ni++)
     {
-        totaltime+=vTimesTrack[ni];
+        totaltime += vTimesTrack[ni];
     }
-    cout << "-------" << endl << endl;
-    cout << "median tracking time: " << vTimesTrack[nImages/2] << endl;
-    cout << "mean tracking time: " << totaltime/nImages << endl;
+    cout << "-------" << endl
+         << endl;
+    cout << "median tracking time: " << vTimesTrack[nImages / 2] << endl;
+    cout << "mean tracking time: " << totaltime / nImages << endl;
 
     // Save camera trajectory
     // SLAM.SaveTrajectoryTUM(strFile + "/FrameTrajectory.txt");
@@ -147,17 +147,32 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames, vecto
     ifstream f;
     f.open(strFile.c_str());
 
+    // 文件中内容是这样：
+    // # color images
+    // # file: 'rgbd_dataset_freiburg1_xyz.bag'
+    // # timestamp filename
+    // 1305031102.175304 rgb/1305031102.175304.png
+    // 1305031102.211214 rgb/1305031102.211214.png
+    // 1305031102.243211 rgb/1305031102.243211.png
+    // 1305031102.275326 rgb/1305031102.275326.png
+    // 1305031102.311267 rgb/1305031102.311267.png
+    // 1305031102.343233 rgb/1305031102.343233.png
+    // 1305031102.375329 rgb/1305031102.375329.png
+    // 1305031102.411258 rgb/1305031102.411258.png
+    // 1305031102.443271 rgb/1305031102.443271.png
+    // ....
+
     // skip first three lines
     string s0;
-    getline(f,s0);
-    getline(f,s0);
-    getline(f,s0);
+    getline(f, s0);
+    getline(f, s0);
+    getline(f, s0);
 
-    while(!f.eof())
+    while (!f.eof())
     {
         string s;
-        getline(f,s);
-        if(!s.empty())
+        getline(f, s);
+        if (!s.empty())
         {
             stringstream ss;
             ss << s;

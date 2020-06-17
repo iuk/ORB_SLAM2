@@ -20,82 +20,77 @@
 #ifndef INITIALIZER_H
 #define INITIALIZER_H
 
-#include<opencv2/opencv.hpp>
+#include <opencv2/opencv.hpp>
 #include "Frame.h"
-
 
 namespace ORB_SLAM2
 {
 
-// THIS IS THE INITIALIZER FOR MONOCULAR SLAM. NOT USED IN THE STEREO OR RGBD CASE.
-class Initializer
-{
-    typedef pair<int,int> Match;
+    // THIS IS THE INITIALIZER FOR MONOCULAR SLAM. NOT USED IN THE STEREO OR RGBD CASE.
+    class Initializer
+    {
+        typedef pair<int, int> Match;
 
-public:
+    public:
+        // Fix the reference frame
+        Initializer(const Frame &ReferenceFrame, float sigma = 1.0, int iterations = 200);
 
-    // Fix the reference frame
-    Initializer(const Frame &ReferenceFrame, float sigma = 1.0, int iterations = 200);
+        // Computes in parallel a fundamental matrix and a homography
+        // Selects a model and tries to recover the motion and the structure from motion
+        bool Initialize(const Frame &CurrentFrame, const vector<int> &vMatches12,
+                        cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated);
 
-    // Computes in parallel a fundamental matrix and a homography
-    // Selects a model and tries to recover the motion and the structure from motion
-    bool Initialize(const Frame &CurrentFrame, const vector<int> &vMatches12,
-                    cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated);
+    private:
+        void FindHomography(vector<bool> &vbMatchesInliers, float &score, cv::Mat &H21);
+        void FindFundamental(vector<bool> &vbInliers, float &score, cv::Mat &F21);
 
+        cv::Mat ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2);
+        cv::Mat ComputeF21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2);
 
-private:
+        float CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vector<bool> &vbMatchesInliers, float sigma);
 
-    void FindHomography(vector<bool> &vbMatchesInliers, float &score, cv::Mat &H21);
-    void FindFundamental(vector<bool> &vbInliers, float &score, cv::Mat &F21);
+        float CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesInliers, float sigma);
 
-    cv::Mat ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2);
-    cv::Mat ComputeF21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2);
+        bool ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv::Mat &K,
+                          cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated);
 
-    float CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vector<bool> &vbMatchesInliers, float sigma);
+        bool ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv::Mat &K,
+                          cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated);
 
-    float CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesInliers, float sigma);
+        void Triangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &P1, const cv::Mat &P2, cv::Mat &x3D);
 
-    bool ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv::Mat &K,
-                      cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated);
+        void Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, cv::Mat &T);
 
-    bool ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv::Mat &K,
-                      cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated);
+        int CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,
+                    const vector<Match> &vMatches12, vector<bool> &vbInliers,
+                    const cv::Mat &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax);
 
-    void Triangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &P1, const cv::Mat &P2, cv::Mat &x3D);
+        void DecomposeE(const cv::Mat &E, cv::Mat &R1, cv::Mat &R2, cv::Mat &t);
 
-    void Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, cv::Mat &T);
+        // Keypoints from Reference Frame (Frame 1)
+        vector<cv::KeyPoint> mvKeys1;
 
-    int CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,
-                       const vector<Match> &vMatches12, vector<bool> &vbInliers,
-                       const cv::Mat &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax);
+        // Keypoints from Current Frame (Frame 2)
+        vector<cv::KeyPoint> mvKeys2;
 
-    void DecomposeE(const cv::Mat &E, cv::Mat &R1, cv::Mat &R2, cv::Mat &t);
+        // Current Matches from Reference to Current
+        vector<Match> mvMatches12;
+        vector<bool> mvbMatched1;
 
+        // Calibration
+        cv::Mat mK; // 去畸变的参数，由内参矩阵计算得到
 
-    // Keypoints from Reference Frame (Frame 1)
-    vector<cv::KeyPoint> mvKeys1;
+        // Standard Deviation and Variance
+        // 标准差和方差
+        float mSigma, mSigma2;
 
-    // Keypoints from Current Frame (Frame 2)
-    vector<cv::KeyPoint> mvKeys2;
+        // Ransac max iterations
+        int mMaxIterations;
 
-    // Current Matches from Reference to Current
-    vector<Match> mvMatches12;
-    vector<bool> mvbMatched1;
+        // Ransac sets
+        vector<vector<size_t>> mvSets;
+    };
 
-    // Calibration
-    cv::Mat mK;
-
-    // Standard Deviation and Variance
-    float mSigma, mSigma2;
-
-    // Ransac max iterations
-    int mMaxIterations;
-
-    // Ransac sets
-    vector<vector<size_t> > mvSets;   
-
-};
-
-} //namespace ORB_SLAM
+} // namespace ORB_SLAM2
 
 #endif // INITIALIZER_H
