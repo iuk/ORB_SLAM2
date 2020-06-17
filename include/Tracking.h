@@ -97,7 +97,7 @@ namespace ORB_SLAM2
         // Initialization Variables (Monocular)
         std::vector<int> mvIniLastMatches;
         // mvIniMatches 在第一帧初始化中被填充为 -1
-        std::vector<int> mvIniMatches;  // 初始化两帧之间的匹配
+        std::vector<int> mvIniMatches;  // 第一帧关键点对应的第二帧关键点
         // mvbPrevMatched 在第一帧初始化中被填充为 初始帧的关键点的坐标
         std::vector<cv::Point2f> mvbPrevMatched;   // 初始化第一帧特征点坐标
         std::vector<cv::Point3f> mvIniP3D;

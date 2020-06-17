@@ -637,8 +637,13 @@ namespace ORB_SLAM2
             vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
             // 步骤5：通过H模型或F模型进行单目初始化，得到两帧间相对运动、初始MapPoints
-            if (mpInitializer->Initialize(mCurrentFrame, mvIniMatches,
-                                          Rcw, tcw, mvIniP3D, vbTriangulated))
+            if (mpInitializer->Initialize(
+                    mCurrentFrame,  // 初始化第二帧
+                    mvIniMatches,
+                    Rcw,
+                    tcw,
+                    mvIniP3D,
+                    vbTriangulated))
             {
                 // 步骤6：删除那些无法进行三角化的匹配点
                 for (size_t i = 0, iend = mvIniMatches.size(); i < iend; i++)

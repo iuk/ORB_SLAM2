@@ -30,9 +30,18 @@
 namespace ORB_SLAM2
 {
 
+    /**
+ * @brief 给定参考帧构造Initializer
+ * 
+ * 用reference frame来初始化，这个reference frame就是SLAM正式开始的第一帧
+ * @param ReferenceFrame 参考帧
+ * @param sigma          测量误差
+ * @param iterations     RANSAC迭代次数
+ */
     // 在函数 void Tracking::MonocularInitialization() 中，如此调用初始化器：
     // mpInitializer = new Initializer(mCurrentFrame, 1.0, 200);
     // 参数：初始帧 标准差 最大迭代数
+    // 初始化第一帧
     Initializer::Initializer(const Frame &ReferenceFrame, float sigma, int iterations)
     {
         // 获取去畸变参数
@@ -45,16 +54,31 @@ namespace ORB_SLAM2
         mMaxIterations = iterations;
     }
 
-    bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatches12, cv::Mat &R21, cv::Mat &t21,
-                                 vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+    /**
+ * @brief 并行地计算基础矩阵和单应性矩阵，选取其中一个模型，恢复出最开始两帧之间的相对姿态以及点云
+ */
+    // 初始化第二帧
+    bool Initializer::Initialize(const Frame &CurrentFrame,     // 输入 初始化第二帧
+                                 const vector<int> &vMatches12, // 输入 第一帧中的keypoint匹配的第二帧keypointid
+                                 cv::Mat &R21,                  // 输出 两帧间相机旋转
+                                 cv::Mat &t21,                  // 输出 两帧间相机平移
+                                 vector<cv::Point3f> &vP3D,     // 输出的啥
+                                 vector<bool> &vbTriangulated)  // 输出
     {
         // Fill structures with current keypoints and matches with reference frame
         // Reference Frame: 1, Current Frame: 2
-        mvKeys2 = CurrentFrame.mvKeysUn;
+        mvKeys2 = CurrentFrame.mvKeysUn; // 储存第二帧的 keypoint
 
+        // mvMatches12记录匹配上的特征点对
         mvMatches12.clear();
         mvMatches12.reserve(mvKeys2.size());
-        mvbMatched1.resize(mvKeys1.size());
+
+        // mvbMatched1记录每个特征点是否有匹配的特征点，
+        // 这个变量后面没有用到，后面只关心匹配上的特征点
+        mvbMatched1.resize(mvKeys1.size()); // mvKeys1 在第一帧初始化中被赋值
+
+        // 步骤1：组织特征点对 {i, matched(i)}
+        // mvMatches12 的格式为 {第一帧特征点id,第二帧特征点id}
         for (size_t i = 0, iend = vMatches12.size(); i < iend; i++)
         {
             if (vMatches12[i] >= 0)
@@ -66,9 +90,11 @@ namespace ORB_SLAM2
                 mvbMatched1[i] = false;
         }
 
+        // 匹配上的特征点的个数
         const int N = mvMatches12.size();
 
         // Indices for minimum set selection
+        // 新建一个容器vAllIndices，生成0到N-1的数作为特征点的索引
         vector<size_t> vAllIndices;
         vAllIndices.reserve(N);
         vector<size_t> vAvailableIndices;
@@ -79,6 +105,9 @@ namespace ORB_SLAM2
         }
 
         // Generate sets of 8 points for each RANSAC iteration
+        // 步骤2：在所有匹配特征点对中随机选择8对匹配特征点为一组，共选择mMaxIterations组
+        // 用于FindHomography和FindFundamental求解
+        // mMaxIterations:200
         mvSets = vector<vector<size_t>>(mMaxIterations, vector<size_t>(8, 0));
 
         DUtils::Random::SeedRandOnce(0);
@@ -90,21 +119,28 @@ namespace ORB_SLAM2
             // Select a minimum set
             for (size_t j = 0; j < 8; j++)
             {
+                // 产生0到N-1的随机数
                 int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size() - 1);
+                // idx表示哪一个索引对应的特征点被选中
                 int idx = vAvailableIndices[randi];
 
                 mvSets[it][j] = idx;
 
+                // randi对应的索引已经被选过了，从容器中删除
+                // randi对应的索引用最后一个元素替换，并删掉最后一个元素
                 vAvailableIndices[randi] = vAvailableIndices.back();
                 vAvailableIndices.pop_back();
             }
         }
 
         // Launch threads to compute in parallel a fundamental matrix and a homography
+        // 步骤3：调用多线程分别用于计算fundamental matrix和homography
         vector<bool> vbMatchesInliersH, vbMatchesInliersF;
         float SH, SF;
         cv::Mat H, F;
 
+        // ref是引用的功能:http://en.cppreference.com/w/cpp/utility/functional/ref
+        // 计算homograpy并打分
         thread threadH(&Initializer::FindHomography, this, ref(vbMatchesInliersH), ref(SH), ref(H));
         thread threadF(&Initializer::FindFundamental, this, ref(vbMatchesInliersF), ref(SF), ref(F));
 
@@ -113,9 +149,13 @@ namespace ORB_SLAM2
         threadF.join();
 
         // Compute ratio of scores
+        // 步骤4：计算得分比例，选取某个模型
         float RH = SH / (SH + SF);
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
+        // 步骤5：从H矩阵或F矩阵中恢复R,t
+        // 参数50: 满足checkRT检测的3D点个数（checkRT时会恢复3D点）
+        // 参数1.0：进行checkRT时恢复的3D点视差角阈值
         if (RH > 0.40)
             return ReconstructH(vbMatchesInliersH, H, mK, R21, t21, vP3D, vbTriangulated, 1.0, 50);
         else //if(pF_HF>0.6)
@@ -124,12 +164,19 @@ namespace ORB_SLAM2
         return false;
     }
 
-    void Initializer::FindHomography(vector<bool> &vbMatchesInliers, float &score, cv::Mat &H21)
+    /**
+ * @brief 计算单应矩阵
+ *
+ * 假设场景为平面情况下通过前两帧求取Homography矩阵(current frame 2 到 reference frame 1),并得到该模型的评分
+ */
+    void Initializer::FindHomography(vector<bool> &vbMatchesInliers,
+                                     float &score, cv::Mat &H21)
     {
         // Number of putative matches
         const int N = mvMatches12.size();
 
         // Normalize coordinates
+        // 将mvKeys1和mvKey2归一化到均值为0，一阶绝对矩为1，归一化矩阵分别为T1、T2
         vector<cv::Point2f> vPn1, vPn2;
         cv::Mat T1, T2;
         Normalize(mvKeys1, vPn1, T1);
@@ -137,6 +184,7 @@ namespace ORB_SLAM2
         cv::Mat T2inv = T2.inv();
 
         // Best Results variables
+        // 最终最佳的MatchesInliers与得分
         score = 0.0;
         vbMatchesInliers = vector<bool>(N, false);
 
@@ -144,6 +192,7 @@ namespace ORB_SLAM2
         vector<cv::Point2f> vPn1i(8);
         vector<cv::Point2f> vPn2i(8);
         cv::Mat H21i, H12i;
+        // 每次RANSAC的MatchesInliers与得分
         vector<bool> vbCurrentInliers(N, false);
         float currentScore;
 
@@ -151,20 +200,22 @@ namespace ORB_SLAM2
         for (int it = 0; it < mMaxIterations; it++)
         {
             // Select a minimum set
+            // 这个应该最少4对匹配点就可以了
             for (size_t j = 0; j < 8; j++)
             {
                 int idx = mvSets[it][j];
-
+                // vPn1i和vPn2i为匹配的特征点对的坐标
                 vPn1i[j] = vPn1[mvMatches12[idx].first];
                 vPn2i[j] = vPn2[mvMatches12[idx].second];
             }
 
             cv::Mat Hn = ComputeH21(vPn1i, vPn2i);
+            // 恢复原始的均值和尺度
             H21i = T2inv * Hn * T1;
             H12i = H21i.inv();
-
+            // 利用重投影误差为当次RANSAC的结果评分
             currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
-
+            // 得到最优的vbMatchesInliers与score
             if (currentScore > score)
             {
                 H21 = H21i.clone();
@@ -747,7 +798,19 @@ namespace ORB_SLAM2
         x3D = x3D.rowRange(0, 3) / x3D.at<float>(3);
     }
 
-    void Initializer::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, cv::Mat &T)
+    /**
+ * ＠brief 将特征点（u,v,1）认为是3D点进一步投影到虚拟图像上，解决特征点分布不均匀的问题
+ *
+ * [x' y' 1]' = T * [x y 1]' \n
+ * 归一化后x', y'的均值为0，sum(abs(x_i'-0))=1，sum(abs((y_i'-0))=1
+ * 
+ * @param vKeys             特征点在图像上的坐标
+ * @param vNormalizedPoints 特征点归一化后的坐标
+ * @param T                 将特征点归一化的矩阵
+ */
+    void Initializer::Normalize(const vector<cv::KeyPoint> &vKeys,      // 输入点集
+                                vector<cv::Point2f> &vNormalizedPoints, // 输出标准化后的点集
+                                cv::Mat &T)
     {
         float meanX = 0;
         float meanY = 0;
@@ -760,7 +823,7 @@ namespace ORB_SLAM2
             meanX += vKeys[i].pt.x;
             meanY += vKeys[i].pt.y;
         }
-
+        // 得点集中心点
         meanX = meanX / N;
         meanY = meanY / N;
 
@@ -769,25 +832,30 @@ namespace ORB_SLAM2
 
         for (int i = 0; i < N; i++)
         {
+            // 点集去中心化
             vNormalizedPoints[i].x = vKeys[i].pt.x - meanX;
             vNormalizedPoints[i].y = vKeys[i].pt.y - meanY;
 
             meanDevX += fabs(vNormalizedPoints[i].x);
             meanDevY += fabs(vNormalizedPoints[i].y);
         }
-
+        // 标准差
         meanDevX = meanDevX / N;
         meanDevY = meanDevY / N;
-
-        float sX = 1.0 / meanDevX;
+        // 标准差分之一
+        float sX = 1.0 / meanDevX; // N/(x1+x2+x3+...+xN)
         float sY = 1.0 / meanDevY;
 
+        // 这样一搞，标准化点集的绝对值和的平均值就为1了
         for (int i = 0; i < N; i++)
         {
             vNormalizedPoints[i].x = vNormalizedPoints[i].x * sX;
             vNormalizedPoints[i].y = vNormalizedPoints[i].y * sY;
         }
 
+        // |sX  0  -meanx*sX|
+        // |0   sY -meany*sY|
+        // |0   0      1    |
         T = cv::Mat::eye(3, 3, CV_32F);
         T.at<float>(0, 0) = sX;
         T.at<float>(1, 1) = sY;
