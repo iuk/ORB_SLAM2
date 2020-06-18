@@ -246,7 +246,8 @@ namespace ORB_SLAM2
     /**
  * @brief 计算基础矩阵
  *
- * 假设场景为非平面情况下通过前两帧求取Fundamental矩阵(current frame 2 到 reference frame 1),并得到该模型的评分
+ * 假设场景为非平面情况下通过前两帧求取Fundamental矩阵(current frame 2 到 reference frame 1),
+ * 并得到该模型的评分
  */
     void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, cv::Mat &F21)
     {
@@ -360,6 +361,13 @@ namespace ORB_SLAM2
         return vt.row(8).reshape(0, 3);
     }
 
+/**
+ * @brief 从特征点匹配求fundamental matrix（normalized 8点法）
+ * @param  vP1 归一化后的点, in reference frame
+ * @param  vP2 归一化后的点, in current frame
+ * @return     基础矩阵
+ * @see        Multiple View Geometry in Computer Vision - Algorithm 11.1 p282 (中文版 p191)
+ */
     cv::Mat Initializer::ComputeF21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
     {
         const int N = vP1.size();
@@ -388,11 +396,11 @@ namespace ORB_SLAM2
 
         cv::SVDecomp(A, w, u, vt, cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-        cv::Mat Fpre = vt.row(8).reshape(0, 3);
+        cv::Mat Fpre = vt.row(8).reshape(0, 3);// v的最后一列
 
         cv::SVDecomp(Fpre, w, u, vt, cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-        w.at<float>(2) = 0;
+        w.at<float>(2) = 0;// 秩2约束，将第3个奇异值设为0
 
         return u * cv::Mat::diag(w) * vt;
     }
