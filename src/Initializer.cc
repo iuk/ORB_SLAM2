@@ -141,8 +141,11 @@ namespace ORB_SLAM2
 
         // ref是引用的功能:http://en.cppreference.com/w/cpp/utility/functional/ref
         // 计算homograpy并打分
+        // 计算单应H阵,内点列表,H分数
         thread threadH(&Initializer::FindHomography, this, ref(vbMatchesInliersH), ref(SH), ref(H));
-        thread threadF(&Initializer::FindFundamental, this, ref(vbMatchesInliersF), ref(SF), ref(F));
+
+        // 计算基本F阵,内点列表,F分数
+        // thread threadF(&Initializer::FindFundamental, this, ref(vbMatchesInliersF), ref(SF), ref(F));
 
         // Wait until both threads have finished
         threadH.join();
@@ -169,6 +172,7 @@ namespace ORB_SLAM2
  *
  * 假设场景为平面情况下通过前两帧求取Homography矩阵(current frame 2 到 reference frame 1),并得到该模型的评分
  */
+    // 输出最优的 单应矩阵,内点列表 和 单应H的分数
     void Initializer::FindHomography(vector<bool> &vbMatchesInliers,
                                      float &score, cv::Mat &H21)
     {
@@ -178,7 +182,12 @@ namespace ORB_SLAM2
         // Normalize coordinates
         // 将mvKeys1和mvKey2归一化到均值为0，一阶绝对矩为1，归一化矩阵分别为T1、T2
         vector<cv::Point2f> vPn1, vPn2;
+        // T1 T2 内容 相似变换矩阵
+        // |sX  0  -meanx*sX|
+        // |0   sY -meany*sY|
+        // |0   0      1    |
         cv::Mat T1, T2;
+        // 归一化：效果：均值为0，绝对值均值为1
         Normalize(mvKeys1, vPn1, T1);
         Normalize(mvKeys2, vPn2, T2);
         cv::Mat T2inv = T2.inv();
@@ -197,10 +206,12 @@ namespace ORB_SLAM2
         float currentScore;
 
         // Perform all RANSAC iterations and save the solution with highest score
+        // 最大迭代200次
         for (int it = 0; it < mMaxIterations; it++)
         {
             // Select a minimum set
             // 这个应该最少4对匹配点就可以了
+            // 每次随机拿8个点对，用于计算单应矩阵 H
             for (size_t j = 0; j < 8; j++)
             {
                 int idx = mvSets[it][j];
@@ -209,13 +220,20 @@ namespace ORB_SLAM2
                 vPn2i[j] = vPn2[mvMatches12[idx].second];
             }
 
+            // vPn1i, vPn2i 为随机8组点对
+            // 这里计算 H21：P2=H21*P1
             cv::Mat Hn = ComputeH21(vPn1i, vPn2i);
-            // 恢复原始的均值和尺度
+            // 恢复原始的均值和尺度 (反归一化)
             H21i = T2inv * Hn * T1;
             H12i = H21i.inv();
+
             // 利用重投影误差为当次RANSAC的结果评分
+            // mSigma 在初始化第一帧时被设置为 1.0
+            // 得到H的分数 和 此H下的 inlier 点对
             currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
             // 得到最优的vbMatchesInliers与score
+
+            // 更新最优的 H21 /inlier 列表 /分数
             if (currentScore > score)
             {
                 H21 = H21i.clone();
@@ -225,6 +243,11 @@ namespace ORB_SLAM2
         }
     }
 
+    /**
+ * @brief 计算基础矩阵
+ *
+ * 假设场景为非平面情况下通过前两帧求取Fundamental矩阵(current frame 2 到 reference frame 1),并得到该模型的评分
+ */
     void Initializer::FindFundamental(vector<bool> &vbMatchesInliers, float &score, cv::Mat &F21)
     {
         // Number of putative matches
@@ -263,7 +286,7 @@ namespace ORB_SLAM2
             cv::Mat Fn = ComputeF21(vPn1i, vPn2i);
 
             F21i = T2t * Fn * T1;
-
+            // 利用重投影误差为当次RANSAC的结果评分
             currentScore = CheckFundamental(F21i, vbCurrentInliers, mSigma);
 
             if (currentScore > score)
@@ -275,11 +298,29 @@ namespace ORB_SLAM2
         }
     }
 
+    // |x'|     | h1 h2 h3 |  |x|
+    // |y'| = a | h4 h5 h6 |  |y|  简写: x' = a H x, a为一个尺度因子
+    // |1 |     | h7 h8 h9 |  |1|
+    // 使用DLT(direct linear tranform)求解该模型
+    // x' = a H x
+    // ---> (x') 叉乘 (H x)  = 0
+    // ---> Ah = 0
+    // A = | 0  0  0 -x -y -1 xy' yy' y'|  h = | h1 h2 h3 h4 h5 h6 h7 h8 h9 |
+    //     |-x -y -1  0  0  0 xx' yx' x'|
+    // 通过SVD求解Ah = 0，A'A最小特征值对应的特征向量即为解
+    /**
+ * @brief 从特征点匹配求homography（normalized DLT）
+ * 
+ * @param  vP1 归一化后的点, in reference frame
+ * @param  vP2 归一化后的点, in current frame
+ * @return     单应矩阵
+ * @see        Multiple View Geometry in Computer Vision - Algorithm 4.2 p109
+ */
     cv::Mat Initializer::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
     {
         const int N = vP1.size();
 
-        cv::Mat A(2 * N, 9, CV_32F);
+        cv::Mat A(2 * N, 9, CV_32F); // 2N*9
 
         for (int i = 0; i < N; i++)
         {
@@ -313,6 +354,9 @@ namespace ORB_SLAM2
 
         cv::SVDecomp(A, w, u, vt, cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
+        // reshape Mat cv::Mat::reshape	(	int 	cn, int 	rows = 0 )
+        // cn	New number of channels. If the parameter is 0, the number of channels remains the same.
+        // rows	New number of rows. If the parameter is 0, the number of rows remains the same.
         return vt.row(8).reshape(0, 3);
     }
 
@@ -353,10 +397,25 @@ namespace ORB_SLAM2
         return u * cv::Mat::diag(w) * vt;
     }
 
-    float Initializer::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vector<bool> &vbMatchesInliers, float sigma)
+    /**
+ * @brief 对给定的homography matrix打分 
+ * 
+ * @see
+ * - Author's paper - IV. AUTOMATIC MAP INITIALIZATION （2）
+ * - Multiple View Geometry in Computer Vision - symmetric transfer errors: 4.2.2 Geometric distance
+ * - Multiple View Geometry in Computer Vision - model selection 4.7.1 RANSAC
+ */
+    float Initializer::CheckHomography(
+        const cv::Mat &H21, // 输入 射影变换单应矩阵  正逆
+        const cv::Mat &H12,
+        vector<bool> &vbMatchesInliers,
+        float sigma) // 被设置为1.0
     {
         const int N = mvMatches12.size();
 
+        // |h11 h12 h13|
+        // |h21 h22 h23|
+        // |h31 h32 h33|
         const float h11 = H21.at<float>(0, 0);
         const float h12 = H21.at<float>(0, 1);
         const float h13 = H21.at<float>(0, 2);
@@ -367,6 +426,9 @@ namespace ORB_SLAM2
         const float h32 = H21.at<float>(2, 1);
         const float h33 = H21.at<float>(2, 2);
 
+        // |h11inv h12inv h13inv|
+        // |h21inv h22inv h23inv|
+        // |h31inv h32inv h33inv|
         const float h11inv = H12.at<float>(0, 0);
         const float h12inv = H12.at<float>(0, 1);
         const float h13inv = H12.at<float>(0, 2);
@@ -381,10 +443,12 @@ namespace ORB_SLAM2
 
         float score = 0;
 
+        // 基于卡方检验计算出的阈值（假设测量有一个像素的偏差）
         const float th = 5.991;
-
+        //信息矩阵，方差平方的倒数
         const float invSigmaSquare = 1.0 / (sigma * sigma);
-
+        // N对特征匹配点
+        // 遍历所有特征点对
         for (int i = 0; i < N; i++)
         {
             bool bIn = true;
@@ -399,23 +463,30 @@ namespace ORB_SLAM2
 
             // Reprojection error in first image
             // x2in1 = H12*x2
-
+            // 将图像2中的特征点单应到图像1中
+            // |u1|   |h11inv h12inv h13inv||u2|
+            // |v1| = |h21inv h22inv h23inv||v2|
+            // |1 |   |h31inv h32inv h33inv||1 |
             const float w2in1inv = 1.0 / (h31inv * u2 + h32inv * v2 + h33inv);
             const float u2in1 = (h11inv * u2 + h12inv * v2 + h13inv) * w2in1inv;
             const float v2in1 = (h21inv * u2 + h22inv * v2 + h23inv) * w2in1inv;
 
+            // 计算重投影误差
             const float squareDist1 = (u1 - u2in1) * (u1 - u2in1) + (v1 - v2in1) * (v1 - v2in1);
-
+            // 根据方差归一化误差
             const float chiSquare1 = squareDist1 * invSigmaSquare;
 
+            // 如果重投影误差大，此点对贡献 0 分
             if (chiSquare1 > th)
                 bIn = false;
+            // 否则贡献的分数为 th - chiSquare1, 误差越小, 分数越多
             else
                 score += th - chiSquare1;
 
+            // 再反过来计算分数
             // Reprojection error in second image
             // x1in2 = H21*x1
-
+            // 将图像1中的特征点单应到图像2中
             const float w1in2inv = 1.0 / (h31 * u1 + h32 * v1 + h33);
             const float u1in2 = (h11 * u1 + h12 * v1 + h13) * w1in2inv;
             const float v1in2 = (h21 * u1 + h22 * v1 + h23) * w1in2inv;
@@ -429,6 +500,7 @@ namespace ORB_SLAM2
             else
                 score += th - chiSquare2;
 
+            // 必须正反投影的误差都小，此点对才是 inliner
             if (bIn)
                 vbMatchesInliers[i] = true;
             else
@@ -839,10 +911,12 @@ namespace ORB_SLAM2
             meanDevX += fabs(vNormalizedPoints[i].x);
             meanDevY += fabs(vNormalizedPoints[i].y);
         }
-        // 标准差
+        // 去中心点集的：平均偏差
+        // https://baike.baidu.com/item/%E7%BB%9D%E5%AF%B9%E5%81%8F%E5%B7%AE
+        // 几个表达偏差的统计量：平均偏差、标准偏差(标准差)，方差
         meanDevX = meanDevX / N;
         meanDevY = meanDevY / N;
-        // 标准差分之一
+        // 平均偏差分之一
         float sX = 1.0 / meanDevX; // N/(x1+x2+x3+...+xN)
         float sY = 1.0 / meanDevY;
 
