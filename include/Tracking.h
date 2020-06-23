@@ -100,7 +100,7 @@ namespace ORB_SLAM2
         std::vector<int> mvIniMatches;  // 第一帧关键点对应的第二帧关键点
         // mvbPrevMatched 在第一帧初始化中被填充为 初始帧的关键点的坐标
         std::vector<cv::Point2f> mvbPrevMatched;   // 初始化第一帧特征点坐标
-        std::vector<cv::Point3f> mvIniP3D;
+        std::vector<cv::Point3f> mvIniP3D;  // 通过初始化得到的三维点坐标
         Frame mInitialFrame;    // 初始化第一帧
 
         // Lists used to recover the full camera trajectory at the end of the execution.

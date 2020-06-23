@@ -689,14 +689,19 @@ namespace ORB_SLAM2
         KeyFrame *pKFini = new KeyFrame(mInitialFrame, mpMap, mpKeyFrameDB);
         KeyFrame *pKFcur = new KeyFrame(mCurrentFrame, mpMap, mpKeyFrameDB);
 
+        // 步骤1：将初始关键帧的描述子转为BoW
         pKFini->ComputeBoW();
+        // 步骤2：将当前关键帧的描述子转为BoW
         pKFcur->ComputeBoW();
 
         // Insert KFs in the map
+        // 步骤3：将关键帧插入到地图
+        // 凡是关键帧，都要插入地图
         mpMap->AddKeyFrame(pKFini);
         mpMap->AddKeyFrame(pKFcur);
 
         // Create MapPoints and asscoiate to keyframes
+        // 步骤4：将3D点包装成MapPoints
         for (size_t i = 0; i < mvIniMatches.size(); i++)
         {
             if (mvIniMatches[i] < 0)
@@ -705,26 +710,39 @@ namespace ORB_SLAM2
             //Create MapPoint.
             cv::Mat worldPos(mvIniP3D[i]);
 
+            // 步骤4.1：用3D点构造MapPoint
             MapPoint *pMP = new MapPoint(worldPos, pKFcur, mpMap);
 
-            pKFini->AddMapPoint(pMP, i);
-            pKFcur->AddMapPoint(pMP, mvIniMatches[i]);
+            // 步骤4.2：为该MapPoint添加属性：
+            // a.观测到该MapPoint的关键帧
+            // b.该MapPoint的描述子
+            // c.该MapPoint的平均观测方向和深度范围
 
+            // a.表示该MapPoint可以被哪个KeyFrame的哪个特征点观测到
             pMP->AddObservation(pKFini, i);
             pMP->AddObservation(pKFcur, mvIniMatches[i]);
 
+            // b.从众多观测到该MapPoint的特征点中挑选区分读最高的描述子
             pMP->ComputeDistinctiveDescriptors();
+            // c.更新该MapPoint平均观测方向以及观测距离的范围
             pMP->UpdateNormalAndDepth();
+
+            // 步骤4.3：表示该KeyFrame的哪个特征点可以观测到哪个3D点
+            pKFini->AddMapPoint(pMP, i);
+            pKFcur->AddMapPoint(pMP, mvIniMatches[i]);
 
             //Fill Current Frame structure
             mCurrentFrame.mvpMapPoints[mvIniMatches[i]] = pMP;
             mCurrentFrame.mvbOutlier[mvIniMatches[i]] = false;
 
             //Add to Map
+            // 步骤4.4：在地图中添加该MapPoint
             mpMap->AddMapPoint(pMP);
         }
 
         // Update Connections
+        // 步骤5：更新关键帧间的连接关系，对于一个新创建的关键帧都会执行一次关键连接关系更新
+        // 在3D点和关键帧之间建立边，每个边有一个权重，边的权重是该关键帧与当前帧公共3D点的个数
         pKFini->UpdateConnections();
         pKFcur->UpdateConnections();
 

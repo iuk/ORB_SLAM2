@@ -118,6 +118,7 @@ protected:
      cv::Mat mWorldPos;
 
      // Keyframes observing the point and associated index in keyframe
+     ///< 记录观测到该MapPoint的KF和该MapPoint在KF中的索引
      std::map<KeyFrame*,size_t> mObservations;
 
      // Mean viewing direction
