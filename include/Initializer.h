@@ -78,7 +78,7 @@ namespace ORB_SLAM2
         vector<bool> mvbMatched1;
 
         // Calibration
-        cv::Mat mK; // 去畸变的参数，由内参矩阵计算得到
+        cv::Mat mK; //< 相机内参
 
         // Standard Deviation and Variance
         // 标准差和方差

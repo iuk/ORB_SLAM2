@@ -463,14 +463,14 @@ namespace ORB_SLAM2
                 // 如果是一个无效距离?
                 if (vMatchedDistance[i2] <= dist)
                     continue;
-                // 如果比最好的好
+                // 如果比最好的好 , 更新最佳
                 if (dist < bestDist)
                 {
                     bestDist2 = bestDist; // 第二好的距离
                     bestDist = dist;      // 最好的距离
                     bestIdx2 = i2;        // F2最好匹配点的 id
                 }
-                // 如果比第二好的好
+                // 如果比第二好的好， 更新次佳
                 else if (dist < bestDist2)
                 {
                     bestDist2 = dist;
@@ -506,7 +506,7 @@ namespace ORB_SLAM2
                     }
                 }
             }
-        } //完成 遍历 Frame1 关键点
+        } //完成 遍历 Frame1 关键点, 完成关键点对的提取
 
         // 依据旋转直方图删除不好的匹配
         if (mbCheckOrientation)
