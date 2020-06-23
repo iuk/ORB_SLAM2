@@ -56,6 +56,13 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
     SetPose(F.mTcw);    
 }
 
+/**
+ * @brief Bag of Words Representation
+ *
+ * 计算mBowVec，并且将描述子分散在第4层上，即mFeatVec记录了属于第i个node的ni个描述子
+ * @see ProcessNewKeyFrame()
+ * 计算此关键帧的词包
+ */
 void KeyFrame::ComputeBoW()
 {
     if(mBowVec.empty() || mFeatVec.empty())

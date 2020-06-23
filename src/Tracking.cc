@@ -636,10 +636,12 @@ namespace ORB_SLAM2
             cv::Mat tcw;                 // Current Camera Translation
             vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
-            // 步骤5：通过H模型或F模型进行单目初始化，得到两帧间相对运动、初始MapPoints
+            // 步骤5：通过H模型或F模型进行单目初始化，
+            // 得到两帧间相对运动：R t
+            // 初始 MapPoints：以第一帧相机坐标系为世界坐标系的 三维坐标
             if (mpInitializer->Initialize(
-                    mCurrentFrame,  // 初始化第二帧
-                    mvIniMatches,
+                    mCurrentFrame, // 初始化第二帧
+                    mvIniMatches,  // 输入 初始匹配的点
                     Rcw,
                     tcw,
                     mvIniP3D,
@@ -658,10 +660,12 @@ namespace ORB_SLAM2
                 // Set Frame Poses
                 // 将初始化的第一帧作为世界坐标系，因此第一帧变换矩阵为单位矩阵
                 mInitialFrame.SetPose(cv::Mat::eye(4, 4, CV_32F));
+
                 // 由Rcw和tcw构造Tcw,并赋值给mTcw，mTcw为世界坐标系到该帧的变换矩阵
                 cv::Mat Tcw = cv::Mat::eye(4, 4, CV_32F);
                 Rcw.copyTo(Tcw.rowRange(0, 3).colRange(0, 3));
                 tcw.copyTo(Tcw.rowRange(0, 3).col(3));
+
                 mCurrentFrame.SetPose(Tcw);
 
                 // 步骤6：将三角化得到的3D点包装成MapPoints
@@ -673,9 +677,15 @@ namespace ORB_SLAM2
         }
     }
 
+    /**
+ * @brief CreateInitialMapMonocular
+ *
+ * 为单目摄像头三角化生成MapPoints
+ */
     void Tracking::CreateInitialMapMonocular()
     {
         // Create KeyFrames
+        // 构造关键帧，并关联 地图 和 关键帧数据库
         KeyFrame *pKFini = new KeyFrame(mInitialFrame, mpMap, mpKeyFrameDB);
         KeyFrame *pKFcur = new KeyFrame(mCurrentFrame, mpMap, mpKeyFrameDB);
 

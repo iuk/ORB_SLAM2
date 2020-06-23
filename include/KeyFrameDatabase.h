@@ -60,6 +60,7 @@ public:
 protected:
 
   // Associated vocabulary
+  // orb 词汇
   const ORBVocabulary* mpVoc;
 
   // Inverted file
