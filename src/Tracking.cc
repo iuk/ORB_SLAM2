@@ -749,6 +749,7 @@ namespace ORB_SLAM2
         // Bundle Adjustment
         cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
+        // 步骤5：BA优化
         Optimizer::GlobalBundleAdjustemnt(mpMap, 20);
 
         // Set median depth to 1

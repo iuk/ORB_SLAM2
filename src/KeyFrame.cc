@@ -145,7 +145,7 @@ namespace ORB_SLAM2
             else
                 return;
         }
-
+        // 重排序关联的 keyframe 顺序
         UpdateBestCovisibles();
     }
 
@@ -154,6 +154,7 @@ namespace ORB_SLAM2
  * 
  * 更新后的变量存储在mvpOrderedConnectedKeyFrames和mvOrderedWeights中
  */
+    // 更新最佳共视
     void KeyFrame::UpdateBestCovisibles()
     {
         unique_lock<mutex> lock(mMutexConnections);

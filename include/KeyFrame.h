@@ -123,8 +123,8 @@ namespace ORB_SLAM2
         static long unsigned int nNextId;
         // 在nNextID的基础上加1就得到了mnID，为当前KeyFrame的ID号
         // 在 keyframe 初始化时执行 mnId=nNextId++;
-        long unsigned int mnId; 
-        
+        long unsigned int mnId;
+
         // 每个KeyFrame基本属性是它是一个Frame，KeyFrame初始化的时候需要Frame，
         // mnFrameId记录了该KeyFrame是由哪个Frame初始化的
         const long unsigned int mnFrameId;
@@ -204,7 +204,7 @@ namespace ORB_SLAM2
         cv::Mat Cw; // Stereo middel point. Only for visualization
 
         // MapPoints associated to keypoints
-        std::vector<MapPoint *> mvpMapPoints;   // 关键帧中的地图点
+        std::vector<MapPoint *> mvpMapPoints; // 关键帧中的地图点
 
         // BoW
         KeyFrameDatabase *mpKeyFrameDB;
@@ -213,12 +213,15 @@ namespace ORB_SLAM2
         // Grid over the image to speed up feature matching
         std::vector<std::vector<std::vector<size_t>>> mGrid;
 
+        // 与该 keyframe 共视的 keyframe 与 共视权重
         std::map<KeyFrame *, int> mConnectedKeyFrameWeights;
+        // 按共视权重排序的关键帧
         std::vector<KeyFrame *> mvpOrderedConnectedKeyFrames;
+        // 按共视权重排序的权重值
         std::vector<int> mvOrderedWeights;
 
         // Spanning Tree and Loop Edges
-        bool mbFirstConnection;
+        bool mbFirstConnection; // 构造函数中置位 true mbFirstConnection(true),
         KeyFrame *mpParent;
         std::set<KeyFrame *> mspChildrens;
         std::set<KeyFrame *> mspLoopEdges;
