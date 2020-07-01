@@ -21,201 +21,200 @@
 #ifndef TRACKING_H
 #define TRACKING_H
 
+#include <mutex>
 #include <opencv2/core/core.hpp>
 #include <opencv2/features2d/features2d.hpp>
 
-#include "Viewer.h"
+#include "Frame.h"
 #include "FrameDrawer.h"
-#include "Map.h"
+#include "Initializer.h"
+#include "KeyFrameDatabase.h"
 #include "LocalMapping.h"
 #include "LoopClosing.h"
-#include "Frame.h"
-#include "ORBVocabulary.h"
-#include "KeyFrameDatabase.h"
-#include "ORBextractor.h"
-#include "Initializer.h"
+#include "Map.h"
 #include "MapDrawer.h"
+#include "ORBVocabulary.h"
+#include "ORBextractor.h"
 #include "System.h"
+#include "Viewer.h"
 
-#include <mutex>
+namespace ORB_SLAM2 {
 
-namespace ORB_SLAM2
-{
+class Viewer;
+class FrameDrawer;
+class Map;
+class LocalMapping;
+class LoopClosing;
+class System;
 
-    class Viewer;
-    class FrameDrawer;
-    class Map;
-    class LocalMapping;
-    class LoopClosing;
-    class System;
+class Tracking {
+ public:
+  Tracking(System *pSys, ORBVocabulary *pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap,
+           KeyFrameDatabase *pKFDB, const string &strSettingPath, const int sensor);
 
-    class Tracking
-    {
+  // Preprocess the input and call Track(). Extract features and performs stereo matching.
+  cv::Mat GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp);
+  cv::Mat GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, const double &timestamp);
+  cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp);
 
-    public:
-        Tracking(System *pSys, ORBVocabulary *pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap,
-                 KeyFrameDatabase *pKFDB, const string &strSettingPath, const int sensor);
+  void SetLocalMapper(LocalMapping *pLocalMapper);
+  void SetLoopClosing(LoopClosing *pLoopClosing);
+  void SetViewer(Viewer *pViewer);
 
-        // Preprocess the input and call Track(). Extract features and performs stereo matching.
-        cv::Mat GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp);
-        cv::Mat GrabImageRGBD(const cv::Mat &imRGB, const cv::Mat &imD, const double &timestamp);
-        cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp);
+  // Load new settings
+  // The focal lenght should be similar or scale prediction will fail when projecting points
+  // TODO: Modify MapPoint::PredictScale to take into account focal lenght
+  void ChangeCalibration(const string &strSettingPath);
 
-        void SetLocalMapper(LocalMapping *pLocalMapper);
-        void SetLoopClosing(LoopClosing *pLoopClosing);
-        void SetViewer(Viewer *pViewer);
+  // Use this function if you have deactivated local mapping and you only want to localize the camera.
+  void InformOnlyTracking(const bool &flag);
 
-        // Load new settings
-        // The focal lenght should be similar or scale prediction will fail when projecting points
-        // TODO: Modify MapPoint::PredictScale to take into account focal lenght
-        void ChangeCalibration(const string &strSettingPath);
+ public:
+  // Tracking states
+  enum eTrackingState {
+    SYSTEM_NOT_READY = -1,
+    NO_IMAGES_YET    = 0,
+    NOT_INITIALIZED  = 1,
+    OK               = 2,
+    LOST             = 3
+  };
 
-        // Use this function if you have deactivated local mapping and you only want to localize the camera.
-        void InformOnlyTracking(const bool &flag);
+  eTrackingState mState;
+  eTrackingState mLastProcessedState;
 
-    public:
-        // Tracking states
-        enum eTrackingState
-        {
-            SYSTEM_NOT_READY = -1,
-            NO_IMAGES_YET = 0,
-            NOT_INITIALIZED = 1,
-            OK = 2,
-            LOST = 3
-        };
+  // Input sensor
+  int mSensor;
 
-        eTrackingState mState;
-        eTrackingState mLastProcessedState;
+  // Current Frame
+  Frame mCurrentFrame;
+  cv::Mat mImGray;
 
-        // Input sensor
-        int mSensor;
+  // Initialization Variables (Monocular)
+  std::vector<int> mvIniLastMatches;
+  // mvIniMatches 在第一帧初始化中被填充为 -1
+  std::vector<int> mvIniMatches;  // 初始化得到的 第一帧关键点对应的第二帧关键点
+  // mvbPrevMatched 在第一帧初始化中被填充为 初始帧的关键点的坐标
+  std::vector<cv::Point2f> mvbPrevMatched;  // 初始化第一帧特征点坐标
+  std::vector<cv::Point3f> mvIniP3D;        // 通过初始化得到的 三维点坐标
+  Frame mInitialFrame;                      // 初始化第一帧
 
-        // Current Frame
-        Frame mCurrentFrame;
-        cv::Mat mImGray;
+  // Lists used to recover the full camera trajectory at the end of the execution.
+  // Basically we store the reference keyframe for each frame and its relative transformation
+  list<cv::Mat> mlRelativeFramePoses;
+  list<KeyFrame *> mlpReferences;
+  list<double> mlFrameTimes;
+  list<bool> mlbLost;
 
-        // Initialization Variables (Monocular)
-        std::vector<int> mvIniLastMatches;
-        // mvIniMatches 在第一帧初始化中被填充为 -1
-        std::vector<int> mvIniMatches;  // 第一帧关键点对应的第二帧关键点
-        // mvbPrevMatched 在第一帧初始化中被填充为 初始帧的关键点的坐标
-        std::vector<cv::Point2f> mvbPrevMatched;   // 初始化第一帧特征点坐标
-        std::vector<cv::Point3f> mvIniP3D;  // 通过初始化得到的三维点坐标
-        Frame mInitialFrame;    // 初始化第一帧
+  // True if local mapping is deactivated and we are performing only localization
+  bool mbOnlyTracking;
 
-        // Lists used to recover the full camera trajectory at the end of the execution.
-        // Basically we store the reference keyframe for each frame and its relative transformation
-        list<cv::Mat> mlRelativeFramePoses;
-        list<KeyFrame *> mlpReferences;
-        list<double> mlFrameTimes;
-        list<bool> mlbLost;
+  void Reset();
 
-        // True if local mapping is deactivated and we are performing only localization
-        bool mbOnlyTracking;
+ protected:
+  // Main tracking function. It is independent of the input sensor.
+  void Track();
 
-        void Reset();
+  // Map initialization for stereo and RGB-D
+  void StereoInitialization();
 
-    protected:
-        // Main tracking function. It is independent of the input sensor.
-        void Track();
+  // Map initialization for monocular
+  void MonocularInitialization();
+  void CreateInitialMapMonocular();
 
-        // Map initialization for stereo and RGB-D
-        void StereoInitialization();
+  void CheckReplacedInLastFrame();
+  bool TrackReferenceKeyFrame();
+  void UpdateLastFrame();
+  bool TrackWithMotionModel();
 
-        // Map initialization for monocular
-        void MonocularInitialization();
-        void CreateInitialMapMonocular();
+  bool Relocalization();
 
-        void CheckReplacedInLastFrame();
-        bool TrackReferenceKeyFrame();
-        void UpdateLastFrame();
-        bool TrackWithMotionModel();
+  void UpdateLocalMap();
+  void UpdateLocalPoints();
+  void UpdateLocalKeyFrames();
 
-        bool Relocalization();
+  bool TrackLocalMap();
+  void SearchLocalPoints();
 
-        void UpdateLocalMap();
-        void UpdateLocalPoints();
-        void UpdateLocalKeyFrames();
+  bool NeedNewKeyFrame();
+  void CreateNewKeyFrame();
 
-        bool TrackLocalMap();
-        void SearchLocalPoints();
+  // In case of performing only localization, this flag is true when there are no matches to
+  // points in the map. Still tracking will continue if there are enough matches with temporal points.
+  // In that case we are doing visual odometry. The system will try to do relocalization to recover
+  // "zero-drift" localization to the map.
+  bool mbVO;
 
-        bool NeedNewKeyFrame();
-        void CreateNewKeyFrame();
+  //Other Thread Pointers
+  LocalMapping *mpLocalMapper;
+  LoopClosing *mpLoopClosing;
 
-        // In case of performing only localization, this flag is true when there are no matches to
-        // points in the map. Still tracking will continue if there are enough matches with temporal points.
-        // In that case we are doing visual odometry. The system will try to do relocalization to recover
-        // "zero-drift" localization to the map.
-        bool mbVO;
+  //ORB
+  // orb特征提取器，不管单目还是双目，mpORBextractorLeft都要用到
+  // 如果是双目，则要用到mpORBextractorRight
+  // 如果是单目，在初始化的时候使用mpIniORBextractor而不是mpORBextractorLeft，
+  // mpIniORBextractor属性中提取的特征点个数是mpORBextractorLeft的两倍
+  ORBextractor *mpORBextractorLeft, *mpORBextractorRight;
+  ORBextractor *mpIniORBextractor;
 
-        //Other Thread Pointers
-        LocalMapping *mpLocalMapper;
-        LoopClosing *mpLoopClosing;
+  //BoW
+  ORBVocabulary *mpORBVocabulary;   // 全局唯一词典
+  KeyFrameDatabase *mpKeyFrameDB;
 
-        //ORB
-        ORBextractor *mpORBextractorLeft, *mpORBextractorRight;
-        ORBextractor *mpIniORBextractor;
+  // Initalization (only for monocular)
+  // 单目初始化器，在Tracker类的构造函数中，此变量被指向 NULL
+  Initializer *mpInitializer;
 
-        //BoW
-        ORBVocabulary *mpORBVocabulary;
-        KeyFrameDatabase *mpKeyFrameDB;
+  //Local Map
+  KeyFrame *mpReferenceKF;
+  std::vector<KeyFrame *> mvpLocalKeyFrames;
+  std::vector<MapPoint *> mvpLocalMapPoints;
 
-        // Initalization (only for monocular)
-        // 单目初始化器，在Tracker类的构造函数中，此变量被指向 NULL
-        Initializer *mpInitializer;
+  // System
+  System *mpSystem;
 
-        //Local Map
-        KeyFrame *mpReferenceKF;
-        std::vector<KeyFrame *> mvpLocalKeyFrames;
-        std::vector<MapPoint *> mvpLocalMapPoints;
+  //Drawers
+  Viewer *mpViewer;
+  FrameDrawer *mpFrameDrawer;
+  MapDrawer *mpMapDrawer;
 
-        // System
-        System *mpSystem;
+  //Map
+  Map *mpMap;
 
-        //Drawers
-        Viewer *mpViewer;
-        FrameDrawer *mpFrameDrawer;
-        MapDrawer *mpMapDrawer;
+  //Calibration matrix
+  cv::Mat mK;
+  cv::Mat mDistCoef;
+  float mbf;
 
-        //Map
-        Map *mpMap;
+  //New KeyFrame rules (according to fps)
+  int mMinFrames;
+  int mMaxFrames;
 
-        //Calibration matrix
-        cv::Mat mK;
-        cv::Mat mDistCoef;
-        float mbf;
+  // Threshold close/far points
+  // Points seen as close by the stereo/RGBD sensor are considered reliable
+  // and inserted from just one frame. Far points requiere a match in two keyframes.
+  float mThDepth;
 
-        //New KeyFrame rules (according to fps)
-        int mMinFrames;
-        int mMaxFrames;
+  // For RGB-D inputs only. For some datasets (e.g. TUM) the depthmap values are scaled.
+  float mDepthMapFactor;
 
-        // Threshold close/far points
-        // Points seen as close by the stereo/RGBD sensor are considered reliable
-        // and inserted from just one frame. Far points requiere a match in two keyframes.
-        float mThDepth;
+  //Current matches in frame
+  int mnMatchesInliers;
 
-        // For RGB-D inputs only. For some datasets (e.g. TUM) the depthmap values are scaled.
-        float mDepthMapFactor;
+  //Last Frame, KeyFrame and Relocalisation Info
+  KeyFrame *mpLastKeyFrame;
+  Frame mLastFrame;
+  unsigned int mnLastKeyFrameId;
+  unsigned int mnLastRelocFrameId;
 
-        //Current matches in frame
-        int mnMatchesInliers;
+  //Motion Model
+  cv::Mat mVelocity;
 
-        //Last Frame, KeyFrame and Relocalisation Info
-        KeyFrame *mpLastKeyFrame;
-        Frame mLastFrame;
-        unsigned int mnLastKeyFrameId;
-        unsigned int mnLastRelocFrameId;
+  //Color order (true RGB, false BGR, ignored if grayscale)
+  bool mbRGB;
 
-        //Motion Model
-        cv::Mat mVelocity;
+  list<MapPoint *> mlpTemporalPoints;
+};
 
-        //Color order (true RGB, false BGR, ignored if grayscale)
-        bool mbRGB;
+}  // namespace ORB_SLAM2
 
-        list<MapPoint *> mlpTemporalPoints;
-    };
-
-} // namespace ORB_SLAM2
-
-#endif // TRACKING_H
+#endif  // TRACKING_H

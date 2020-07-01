@@ -402,7 +402,7 @@ namespace DBoW2
     int m_k;
 
     /// Depth levels
-    int m_L;
+    int m_L;  // 树的深度
 
     /// Weighting method
     WeightingType m_weighting;
@@ -414,11 +414,11 @@ namespace DBoW2
     GeneralScoring *m_scoring_object;
 
     /// Tree nodes
-    std::vector<Node> m_nodes;
+    std::vector<Node> m_nodes;  // 储存所有的Node
 
     /// Words of the vocabulary (tree leaves)
     /// this condition holds: m_words[wid]->word_id == wid
-    std::vector<Node *> m_words;
+    std::vector<Node *> m_words;  // 储存所有的叶子Node
   };
 
   // --------------------------------------------------------------------------

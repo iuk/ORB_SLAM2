@@ -3,7 +3,8 @@
         "*.txt": "log",
         "array": "cpp",
         "*.tcc": "cpp",
-        "locale": "cpp"
+        "locale": "cpp",
+        "map": "cpp"
     },
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
 }
