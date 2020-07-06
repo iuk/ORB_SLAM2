@@ -36,6 +36,7 @@ namespace ORB_SLAM2
         return vDesc;
     }
 
+    // 4x4 变换矩阵T 转换为 se3quat 类型:四元数向量+3维位置向量
     g2o::SE3Quat Converter::toSE3Quat(const cv::Mat &cvT)
     {
         Eigen::Matrix<double, 3, 3> R;

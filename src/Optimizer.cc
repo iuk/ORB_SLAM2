@@ -38,7 +38,11 @@ namespace ORB_SLAM2 {
 // 这个全局BA优化在本程序中有两个地方使用：
 // a.单目初始化：CreateInitialMapMonocular函数
 // b.闭环优化：RunGlobalBundleAdjustment函数
-void Optimizer::GlobalBundleAdjustemnt(Map *pMap, int nIterations, bool *pbStopFlag, const unsigned long nLoopKF, const bool bRobust) {
+void Optimizer::GlobalBundleAdjustemnt(Map *pMap,
+                                       int nIterations,
+                                       bool *pbStopFlag,
+                                       const unsigned long nLoopKF,
+                                       const bool bRobust) {
   vector<KeyFrame *> vpKFs = pMap->GetAllKeyFrames();
   vector<MapPoint *> vpMP  = pMap->GetAllMapPoints();
   BundleAdjustment(vpKFs, vpMP, nIterations, pbStopFlag, nLoopKF, bRobust);
@@ -73,17 +77,19 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
                                  const bool bRobust) {
   vector<bool> vbNotIncludedMP;
   vbNotIncludedMP.resize(vpMP.size());
-
+  
+  // 步骤1：初始化g2o优化器
   g2o::SparseOptimizer optimizer;
+
+  // 优化器设置 LM 算法
   g2o::BlockSolver_6_3::LinearSolverType *linearSolver;
-
   linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
-
   g2o::BlockSolver_6_3 *solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
-
-  g2o::OptimizationAlgorithmLevenberg *solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
+  g2o::OptimizationAlgorithmLevenberg *solver =
+      new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
   optimizer.setAlgorithm(solver);
 
+  // 优化器设置stop 标志
   if (pbStopFlag)
     optimizer.setForceStopFlag(pbStopFlag);
 
@@ -91,7 +97,7 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
 
   // 步骤2：向优化器添加顶点
   // Set KeyFrame vertices
-  // 步骤2.1：向优化器添加关键帧位姿顶点
+  // 步骤2.1：向优化器添加 ==关键帧位姿== 顶点
   for (size_t i = 0; i < vpKFs.size(); i++) {
     KeyFrame *pKF = vpKFs[i];
     if (pKF->isBad())
@@ -100,7 +106,9 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
     // 设置顶点的待估值的 初始值
     vSE3->setEstimate(Converter::toSE3Quat(pKF->GetPose()));
     vSE3->setId(pKF->mnId);
+    // 设置顶点是否固定
     vSE3->setFixed(pKF->mnId == 0);
+    // 添加顶点
     optimizer.addVertex(vSE3);
     if (pKF->mnId > maxKFid)
       maxKFid = pKF->mnId;
@@ -110,38 +118,46 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
   const float thHuber3D = sqrt(7.815);
 
   // Set MapPoint vertices
-  // 步骤2.2：向优化器添加MapPoints顶点
+  // 步骤2.2：向优化器添加 ==MapPoints== 顶点
+  // 遍历 mappoint，将其xyz-pose作为顶点加入到优化器
   for (size_t i = 0; i < vpMP.size(); i++) {
     MapPoint *pMP = vpMP[i];
     if (pMP->isBad())
       continue;
+    // 稀疏 bundle adjuagement
     g2o::VertexSBAPointXYZ *vPoint = new g2o::VertexSBAPointXYZ();
     vPoint->setEstimate(Converter::toVector3d(pMP->GetWorldPos()));
     const int id = pMP->mnId + maxKFid + 1;
     vPoint->setId(id);
     vPoint->setMarginalized(true);
     optimizer.addVertex(vPoint);
-
+    // GetObservations() 返回 keyframe 和 在keyframe中的索引 std::map
     const map<KeyFrame *, size_t> observations = pMP->GetObservations();
 
     int nEdges = 0;
     //SET EDGES
     // 步骤3：向优化器添加投影边边
-    for (map<KeyFrame *, size_t>::const_iterator mit = observations.begin(); mit != observations.end(); mit++) {
+    // 遍历对这个 mappoint 的所有观察，将其作为边加入到优化器中
+    for (map<KeyFrame *, size_t>::const_iterator mit = observations.begin();
+         mit != observations.end(); mit++) {
+      // 获取 key frame
       KeyFrame *pKF = mit->first;
       if (pKF->isBad() || pKF->mnId > maxKFid)
         continue;
 
       nEdges++;
-
+      //mvKeysUn 去畸变的 keypoint
+      // 获取 keyframe 中对应的 keypoint
       const cv::KeyPoint &kpUn = pKF->mvKeysUn[mit->second];
-      // 单目或RGBD相机
+      // 此值 <0 则为单目或RGBD相机
       if (pKF->mvuRight[mit->second] < 0) {
         Eigen::Matrix<double, 2, 1> obs;
         obs << kpUn.pt.x, kpUn.pt.y;
 
+        // new 一个 SE3 投影到 XYZ 的边
         g2o::EdgeSE3ProjectXYZ *e = new g2o::EdgeSE3ProjectXYZ();
 
+        // 为边添加顶点 0：
         e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(id)));
         e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(pKF->mnId)));
         e->setMeasurement(obs);
@@ -211,7 +227,8 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
     KeyFrame *pKF = vpKFs[i];
     if (pKF->isBad())
       continue;
-    g2o::VertexSE3Expmap *vSE3 = static_cast<g2o::VertexSE3Expmap *>(optimizer.vertex(pKF->mnId));
+    g2o::VertexSE3Expmap *vSE3 =
+        static_cast<g2o::VertexSE3Expmap *>(optimizer.vertex(pKF->mnId));
     g2o::SE3Quat SE3quat       = vSE3->estimate();
     if (nLoopKF == 0) {
       pKF->SetPose(Converter::toCvMat(SE3quat));
@@ -231,7 +248,8 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
 
     if (pMP->isBad())
       continue;
-    g2o::VertexSBAPointXYZ *vPoint = static_cast<g2o::VertexSBAPointXYZ *>(optimizer.vertex(pMP->mnId + maxKFid + 1));
+    g2o::VertexSBAPointXYZ *vPoint =
+        static_cast<g2o::VertexSBAPointXYZ *>(optimizer.vertex(pMP->mnId + maxKFid + 1));
 
     if (nLoopKF == 0) {
       pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));
@@ -252,7 +270,8 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
 
   g2o::BlockSolver_6_3 *solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
 
-  g2o::OptimizationAlgorithmLevenberg *solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
+  g2o::OptimizationAlgorithmLevenberg *solver =
+      new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
   optimizer.setAlgorithm(solver);
 
   int nInitialCorrespondences = 0;
@@ -330,7 +349,8 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
           const float &kp_ur       = pFrame->mvuRight[i];
           obs << kpUn.pt.x, kpUn.pt.y, kp_ur;
 
-          g2o::EdgeStereoSE3ProjectXYZOnlyPose *e = new g2o::EdgeStereoSE3ProjectXYZOnlyPose();
+          g2o::EdgeStereoSE3ProjectXYZOnlyPose *e =
+              new g2o::EdgeStereoSE3ProjectXYZOnlyPose();
 
           e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(0)));
           e->setMeasurement(obs);
