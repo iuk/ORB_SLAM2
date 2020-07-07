@@ -694,6 +694,8 @@ void Tracking::CreateInitialMapMonocular() {
   // 步骤6：!!!将MapPoints的中值深度归一化到1，并归一化两帧之间变换
   // 单目传感器无法恢复真实的深度，这里将点云中值深度（欧式距离，不是指z）归一化到1
   // 评估关键帧场景深度，q=2表示中值
+  // 计算mappoint 在初始第一帧中的深度中值 就是 mappoint 在世界系中的深度(z) 中值
+  // 注：初始化第一帧同时为世界坐标系
   float medianDepth    = pKFini->ComputeSceneMedianDepth(2);
   float invMedianDepth = 1.0f / medianDepth;
 
@@ -704,14 +706,9 @@ void Tracking::CreateInitialMapMonocular() {
     return;
   }
 
-  // Scale initial baseline
-  cv::Mat Tc2w               = pKFcur->GetPose();
-  // 根据点云归一化比例缩放平移量
-  Tc2w.col(3).rowRange(0, 3) = Tc2w.col(3).rowRange(0, 3) * invMedianDepth;
-  pKFcur->SetPose(Tc2w);
-
   // Scale points
   // 把3D点的尺度也归一化到1
+  // 对 所有 mappoint 点缩放。缩放的结果是  其z的中值 = 1M
   vector<MapPoint *> vpAllMapPoints = pKFini->GetMapPointMatches();
   for (size_t iMP = 0; iMP < vpAllMapPoints.size(); iMP++) {
     if (vpAllMapPoints[iMP]) {
@@ -719,7 +716,18 @@ void Tracking::CreateInitialMapMonocular() {
       pMP->SetWorldPos(pMP->GetWorldPos() * invMedianDepth);
     }
   }
+
+  // Scale initial baseline
+  // 根据点云归一化比例缩放平移量
+  // 对1-2 帧的平移量进行缩放
+  cv::Mat Tc2w               = pKFcur->GetPose();
+  Tc2w.col(3).rowRange(0, 3) = Tc2w.col(3).rowRange(0, 3) * invMedianDepth;
+  pKFcur->SetPose(Tc2w);
+
   // 这部分和SteroInitialization()相似
+  // localMapper 本体在  system::system 中构造：
+  // mpLocalMapper   = new LocalMapping(mpMap, mSensor == MONOCULAR);
+  // InsertKeyFrame() 就是 push 到一个 std::list 中
   mpLocalMapper->InsertKeyFrame(pKFini);
   mpLocalMapper->InsertKeyFrame(pKFcur);
 
