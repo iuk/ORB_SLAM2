@@ -50,27 +50,50 @@ ORBmatcher::ORBmatcher(float nnratio, bool checkOri)
     : mfNNratio(nnratio), mbCheckOrientation(checkOri) {
 }
 
-int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint *> &vpMapPoints, const float th) {
+/**
+ * @brief 对于每个局部3D点通过投影在小范围内找到和最匹配的2D点。
+ * 从而实现Frame对Local MapPoint的跟踪。用于tracking过程中实现当前帧对局部3D点的跟踪。
+ * 将Local MapPoint投影到当前帧中, 由此增加当前帧的MapPoints \n
+ * 在SearchLocalPoints()中已经将Local MapPoints重投影（isInFrustum()）到当前帧 \n
+ * 并标记了这些点是否在当前帧的视野中，即mbTrackInView \n
+ * 对这些MapPoints，在其投影点附近根据描述子距离选取匹配，以及最终的方向投票机制进行剔除
+ * @param  F           当前帧
+ * @param  vpMapPoints Local MapPoints
+ * @param  th          搜索范围因子：r = r * th * ScaleFactor
+ * @return             成功匹配的数量
+ * @see SearchLocalPoints() isInFrustum()
+ */
+int ORBmatcher::SearchByProjection(
+    Frame &F,
+    const vector<MapPoint *> &vpMapPoints,
+    const float th) {
   int nmatches = 0;
 
   const bool bFactor = th != 1.0;
 
+  // 遍历所有 local map points
   for (size_t iMP = 0; iMP < vpMapPoints.size(); iMP++) {
     MapPoint *pMP = vpMapPoints[iMP];
+    // 判断该点是否要投影
     if (!pMP->mbTrackInView)
       continue;
 
     if (pMP->isBad())
       continue;
-
+    // step1：通过距离预测特征点所在的金字塔层数
     const int &nPredictedLevel = pMP->mnTrackScaleLevel;
 
     // The size of the window will depend on the viewing direction
+    // step2：根据观测到该3D点的视角确定搜索窗口的大小, 若相机正对这该3D点则r取一个较小的值（mTrackViewCos>0.998?2.5:4.0）
     float r = RadiusByViewingCos(pMP->mTrackViewCos);
 
     if (bFactor)
       r *= th;
-
+    // (pMP->mTrackProjX, pMP->mTrackProjY)：图像特征点坐标
+    // r*F.mvScaleFactors[nPredictedLevel]：搜索范围
+    // nPredictedLevel-1：miniLevel
+    // nPredictedLevel：maxLevel
+    // step3：在2D投影点附近一定范围内搜索属于miniLevel~maxLevel层的特征点 ---> vIndices
     const vector<size_t> vIndices =
         F.GetFeaturesInArea(pMP->mTrackProjX, pMP->mTrackProjY, r * F.mvScaleFactors[nPredictedLevel], nPredictedLevel - 1, nPredictedLevel);
 
@@ -86,9 +109,10 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint *> &vpMapPoin
     int bestIdx    = -1;
 
     // Get best and second matches with near keypoints
+    // step4：在vIndices内找到最佳匹配与次佳匹配，如果最优匹配误差小于阈值，且最优匹配明显优于次优匹配，则匹配3D点-2D特征点匹配关联成功
     for (vector<size_t>::const_iterator vit = vIndices.begin(), vend = vIndices.end(); vit != vend; vit++) {
       const size_t idx = *vit;
-
+      // 如果Frame中的该兴趣点已经有对应的MapPoint了，则退出该次循环
       if (F.mvpMapPoints[idx])
         if (F.mvpMapPoints[idx]->Observations() > 0)
           continue;
@@ -102,7 +126,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint *> &vpMapPoin
       const cv::Mat &d = F.mDescriptors.row(idx);
 
       const int dist = DescriptorDistance(MPdescriptor, d);
-
+      // 记录最优匹配和次优匹配
       if (dist < bestDist) {
         bestDist2  = bestDist;
         bestDist   = dist;
@@ -119,7 +143,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint *> &vpMapPoin
     if (bestDist <= TH_HIGH) {
       if (bestLevel == bestLevel2 && bestDist > mfNNratio * bestDist2)
         continue;
-
+      // 为Frame中的兴趣点增加对应的MapPoint
       F.mvpMapPoints[bestIdx] = pMP;
       nmatches++;
     }
@@ -153,7 +177,21 @@ bool ORBmatcher::CheckDistEpipolarLine(const cv::KeyPoint &kp1, const cv::KeyPoi
   return dsqr < 3.84 * pKF2->mvLevelSigma2[kp2.octave];
 }
 
-int ORBmatcher::SearchByBoW(KeyFrame *pKF, Frame &F, vector<MapPoint *> &vpMapPointMatches) {
+/**
+ * @brief 通过语法树加速关键帧与当前帧之间的特征点匹配
+ * 
+ * 通过bow对pKF和F中的特征点进行快速匹配（不属于同一node的特征点直接跳过匹配） \n
+ * 对属于同一node的特征点通过描述子距离进行匹配 \n
+ * 根据匹配，用pKF中特征点对应的MapPoint更新F中特征点对应的MapPoints \n
+ * 每个特征点都对应一个MapPoint，因此pKF中每个特征点的MapPoint也就是F中对应点的MapPoint \n
+ * 通过距离阈值、比例阈值和角度投票进行剔除误匹配
+ * @param  pKF               KeyFrame
+ * @param  F                 Current Frame
+ * @param  vpMapPointMatches F中MapPoints对应的匹配，NULL表示未匹配
+ * @return                   成功匹配的数量
+ */
+int ORBmatcher::SearchByBoW(KeyFrame *pKF, Frame &F,
+                            vector<MapPoint *> &vpMapPointMatches) {
   const vector<MapPoint *> vpMapPointsKF = pKF->GetMapPointMatches();
 
   vpMapPointMatches = vector<MapPoint *>(F.N, static_cast<MapPoint *>(NULL));

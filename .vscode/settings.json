@@ -4,7 +4,10 @@
         "array": "cpp",
         "*.tcc": "cpp",
         "locale": "cpp",
-        "map": "cpp"
+        "map": "cpp",
+        "__config": "cpp",
+        "chrono": "cpp",
+        "system_error": "cpp"
     },
     "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
 }

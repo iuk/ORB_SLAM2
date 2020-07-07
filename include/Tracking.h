@@ -204,7 +204,7 @@ class Tracking {
   KeyFrame *mpLastKeyFrame;
   Frame mLastFrame;
   unsigned int mnLastKeyFrameId;
-  unsigned int mnLastRelocFrameId;
+  unsigned int mnLastRelocFrameId; // 上一次重定位的那一帧
 
   //Motion Model
   cv::Mat mVelocity;
