@@ -686,12 +686,18 @@ void Tracking::CreateInitialMapMonocular() {
   cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
   // 步骤5：BA优化
+  // 经过 BA 优化，map 中的 mappoint 和 keyframe 的位姿都将被更新
   Optimizer::GlobalBundleAdjustemnt(mpMap, 20);
 
   // Set median depth to 1
+  // 关键帧的 中值深度
+  // 步骤6：!!!将MapPoints的中值深度归一化到1，并归一化两帧之间变换
+  // 单目传感器无法恢复真实的深度，这里将点云中值深度（欧式距离，不是指z）归一化到1
+  // 评估关键帧场景深度，q=2表示中值
   float medianDepth    = pKFini->ComputeSceneMedianDepth(2);
   float invMedianDepth = 1.0f / medianDepth;
 
+  // 失败的初始化
   if (medianDepth < 0 || pKFcur->TrackedMapPoints(1) < 100) {
     cout << "Wrong initialization, reseting..." << endl;
     Reset();
@@ -700,10 +706,12 @@ void Tracking::CreateInitialMapMonocular() {
 
   // Scale initial baseline
   cv::Mat Tc2w               = pKFcur->GetPose();
+  // 根据点云归一化比例缩放平移量
   Tc2w.col(3).rowRange(0, 3) = Tc2w.col(3).rowRange(0, 3) * invMedianDepth;
   pKFcur->SetPose(Tc2w);
 
   // Scale points
+  // 把3D点的尺度也归一化到1
   vector<MapPoint *> vpAllMapPoints = pKFini->GetMapPointMatches();
   for (size_t iMP = 0; iMP < vpAllMapPoints.size(); iMP++) {
     if (vpAllMapPoints[iMP]) {
@@ -711,7 +719,7 @@ void Tracking::CreateInitialMapMonocular() {
       pMP->SetWorldPos(pMP->GetWorldPos() * invMedianDepth);
     }
   }
-
+  // 这部分和SteroInitialization()相似
   mpLocalMapper->InsertKeyFrame(pKFini);
   mpLocalMapper->InsertKeyFrame(pKFcur);
 
@@ -734,6 +742,7 @@ void Tracking::CreateInitialMapMonocular() {
   mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
   mState = OK;
+  // 初始化成功，至此，初始化过程完成
 }
 
 void Tracking::CheckReplacedInLastFrame() {

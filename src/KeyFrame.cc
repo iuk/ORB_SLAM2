@@ -662,6 +662,11 @@ cv::Mat KeyFrame::UnprojectStereo(int i) {
     return cv::Mat();
 }
 
+/**
+ * @brief 评估当前关键帧场景深度，q=2表示中值
+ * @param q q=2
+ * @return Median Depth
+ */
 float KeyFrame::ComputeSceneMedianDepth(const int q) {
   vector<MapPoint *> vpMapPoints;
   cv::Mat Tcw_;
@@ -671,7 +676,7 @@ float KeyFrame::ComputeSceneMedianDepth(const int q) {
     vpMapPoints = mvpMapPoints;
     Tcw_        = Tcw.clone();
   }
-
+  // N 关键点个数。
   vector<float> vDepths;
   vDepths.reserve(N);
   cv::Mat Rcw2 = Tcw_.row(2).colRange(0, 3);
@@ -681,7 +686,7 @@ float KeyFrame::ComputeSceneMedianDepth(const int q) {
     if (mvpMapPoints[i]) {
       MapPoint *pMP = mvpMapPoints[i];
       cv::Mat x3Dw  = pMP->GetWorldPos();
-      float z       = Rcw2.dot(x3Dw) + zcw;
+      float z       = Rcw2.dot(x3Dw) + zcw; // (R*x3Dw+t)的第三行，即z
       vDepths.push_back(z);
     }
   }

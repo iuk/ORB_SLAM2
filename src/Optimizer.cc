@@ -38,6 +38,11 @@ namespace ORB_SLAM2 {
 // 这个全局BA优化在本程序中有两个地方使用：
 // a.单目初始化：CreateInitialMapMonocular函数
 // b.闭环优化：RunGlobalBundleAdjustment函数
+// 缺省值：
+// int nIterations             = 5,
+// bool *pbStopFlag            = NULL,
+// const unsigned long nLoopKF = 0,
+// const bool bRobust          = true
 void Optimizer::GlobalBundleAdjustemnt(Map *pMap,
                                        int nIterations,
                                        bool *pbStopFlag,
@@ -69,6 +74,11 @@ void Optimizer::GlobalBundleAdjustemnt(Map *pMap,
  *          nLoopKF  关键帧的个数
  *          bRobust  是否使用核函数
  */
+// 缺省值：
+// int nIterations             = 5,
+// bool *pbStopFlag            = NULL,
+// const unsigned long nLoopKF = 0,
+// const bool bRobust          = true
 void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
                                  const vector<MapPoint *> &vpMP,
                                  int nIterations,
@@ -77,13 +87,13 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
                                  const bool bRobust) {
   vector<bool> vbNotIncludedMP;
   vbNotIncludedMP.resize(vpMP.size());
-  
+
   // 步骤1：初始化g2o优化器
   g2o::SparseOptimizer optimizer;
 
   // 优化器设置 LM 算法
   g2o::BlockSolver_6_3::LinearSolverType *linearSolver;
-  linearSolver = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
+  linearSolver                     = new g2o::LinearSolverEigen<g2o::BlockSolver_6_3::PoseMatrixType>();
   g2o::BlockSolver_6_3 *solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
   g2o::OptimizationAlgorithmLevenberg *solver =
       new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
@@ -157,24 +167,36 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
         // new 一个 SE3 投影到 XYZ 的边
         g2o::EdgeSE3ProjectXYZ *e = new g2o::EdgeSE3ProjectXYZ();
 
-        // 为边添加顶点 0：
+        // 为边添加顶点 0：此 mappoint 点
         e->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(id)));
+        // 为边添加顶点1：mappoint 点对应的 被观察到的 keyframe 之一。
         e->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(pKF->mnId)));
+        // 为边添加测量值：
         e->setMeasurement(obs);
+
+        // InvLevelSigma2 最早在 ORBExtractor 中定义。是固定的。
+        // octave 是金字塔层，越大表示分辨率越低，sigma 越大
+        // sigma 越大 则 invsigma 越小
+        // 信息矩阵代表权重。越大表示方差越小权重越大。
+        // 总结来就是：层数越大，权重越小
         const float &invSigma2 = pKF->mvInvLevelSigma2[kpUn.octave];
         e->setInformation(Eigen::Matrix2d::Identity() * invSigma2);
 
         if (bRobust) {
+          // Huber 一种常用的 鲁棒核
           g2o::RobustKernelHuber *rk = new g2o::RobustKernelHuber;
           e->setRobustKernel(rk);
+          // 一种阈值?
           rk->setDelta(thHuber2D);
         }
 
+        // 为投影边加入相机内参
         e->fx = pKF->fx;
         e->fy = pKF->fy;
         e->cx = pKF->cx;
         e->cy = pKF->cy;
 
+        // 向优化器中加入边
         optimizer.addEdge(e);
       } else {
         Eigen::Matrix<double, 3, 1> obs;
@@ -204,33 +226,41 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
 
         optimizer.addEdge(e);
       }
-    }
+    }  // 完成遍历 mappoint 中有的观察者 keyframe
 
+    // 如果当前mappoint 新增加的边=0
     if (nEdges == 0) {
       optimizer.removeVertex(vPoint);
-      vbNotIncludedMP[i] = true;
+      vbNotIncludedMP[i] = true;  // 此 MapPoint 不被包含
     } else {
       vbNotIncludedMP[i] = false;
     }
-  }
+  }  // 完成遍历 mappoint
 
   // Optimize!
   // 步骤4：开始优化
   optimizer.initializeOptimization();
+  // 输入最大迭代次数
   optimizer.optimize(nIterations);
 
   // Recover optimized data
   // 步骤5：得到优化的结果
 
   //Keyframes
+  // 遍历输入的所有 keyframe
   for (size_t i = 0; i < vpKFs.size(); i++) {
     KeyFrame *pKF = vpKFs[i];
     if (pKF->isBad())
       continue;
+    // 依据id获取优化器中的顶点对象
     g2o::VertexSE3Expmap *vSE3 =
         static_cast<g2o::VertexSE3Expmap *>(optimizer.vertex(pKF->mnId));
-    g2o::SE3Quat SE3quat       = vSE3->estimate();
+    // 获取顶点中的估计值
+    g2o::SE3Quat SE3quat = vSE3->estimate();
+
+    // nLoopKF 缺省 = 0
     if (nLoopKF == 0) {
+      // 用顶点估计值设置 key frame 的位置
       pKF->SetPose(Converter::toCvMat(SE3quat));
     } else {
       pKF->mTcwGBA.create(4, 4, CV_32F);
@@ -248,11 +278,14 @@ void Optimizer::BundleAdjustment(const vector<KeyFrame *> &vpKFs,
 
     if (pMP->isBad())
       continue;
+    // 获取优化器中 mappoint 类型 顶点
     g2o::VertexSBAPointXYZ *vPoint =
         static_cast<g2o::VertexSBAPointXYZ *>(optimizer.vertex(pMP->mnId + maxKFid + 1));
 
     if (nLoopKF == 0) {
+      // 设置 mappoint xyz 位置
       pMP->SetWorldPos(Converter::toCvMat(vPoint->estimate()));
+      // 因为 mappoint 和 keyframe pose 都被更新。因此更新 mappoint 平均被观测方向
       pMP->UpdateNormalAndDepth();
     } else {
       pMP->mPosGBA.create(3, 1, CV_32F);
