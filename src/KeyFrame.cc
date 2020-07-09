@@ -224,20 +224,35 @@ vector<KeyFrame *> KeyFrame::GetVectorCovisibleKeyFrames() {
   return mvpOrderedConnectedKeyFrames;
 }
 
+/**
+ * @brief 得到与该关键帧连接的前N个关键帧(已按权值排序)
+ * 
+ * 如果连接的关键帧少于N，则返回所有连接的关键帧
+ * @param N 前N个
+ * @return 连接的关键帧
+ */
 vector<KeyFrame *> KeyFrame::GetBestCovisibilityKeyFrames(const int &N) {
   unique_lock<mutex> lock(mMutexConnections);
   if ((int)mvpOrderedConnectedKeyFrames.size() < N)
     return mvpOrderedConnectedKeyFrames;
   else
-    return vector<KeyFrame *>(mvpOrderedConnectedKeyFrames.begin(), mvpOrderedConnectedKeyFrames.begin() + N);
+    return vector<KeyFrame *>(mvpOrderedConnectedKeyFrames.begin(),
+                              mvpOrderedConnectedKeyFrames.begin() + N);
 }
 
+/**
+ * @brief 得到与该关键帧连接的权重大于等于w的关键帧
+ * @param w 权重
+ * @return 连接的关键帧
+ */
 vector<KeyFrame *> KeyFrame::GetCovisiblesByWeight(const int &w) {
   unique_lock<mutex> lock(mMutexConnections);
 
   if (mvpOrderedConnectedKeyFrames.empty())
     return vector<KeyFrame *>();
-
+  // http://www.cplusplus.com/reference/algorithm/upper_bound/
+  // 从mvOrderedWeights找出第一个大于w的那个迭代器
+  // 这里应该使用lower_bound，因为lower_bound是返回小于等于，而upper_bound只能返回第一个大于的
   vector<int>::iterator it = upper_bound(mvOrderedWeights.begin(), mvOrderedWeights.end(), w, KeyFrame::weightComp);
   if (it == mvOrderedWeights.end())
     return vector<KeyFrame *>();

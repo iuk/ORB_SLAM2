@@ -197,7 +197,7 @@ class KeyFrame {
   // SE3 Pose and camera center
   cv::Mat Tcw;
   cv::Mat Twc;
-  cv::Mat Ow;
+  cv::Mat Ow; // 相机在世界坐标系中的坐标
 
   cv::Mat Cw;  // Stereo middel point. Only for visualization
 

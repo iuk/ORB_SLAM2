@@ -322,7 +322,7 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
   g2o::SparseOptimizer optimizer;
 
   g2o::BlockSolver_6_3::LinearSolverType *linearSolver;
-  linearSolver = new g2o::LinearSolverDense<g2o::BlockSolver_6_3::PoseMatrixType>();
+  linearSolver                     = new g2o::LinearSolverDense<g2o::BlockSolver_6_3::PoseMatrixType>();
   g2o::BlockSolver_6_3 *solver_ptr = new g2o::BlockSolver_6_3(linearSolver);
 
   g2o::OptimizationAlgorithmLevenberg *solver =
@@ -379,7 +379,7 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
           obs << kpUn.pt.x, kpUn.pt.y;
           // 为边增加测量量
           e->setMeasurement(obs);
-          
+
           // 为边增加信息矩阵(权重)
           const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
           e->setInformation(Eigen::Matrix2d::Identity() * invSigma2);
@@ -389,11 +389,11 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
           rk->setDelta(deltaMono);
 
           // 投影边需要设置相机内参
-          e->fx      = pFrame->fx;
-          e->fy      = pFrame->fy;
-          e->cx      = pFrame->cx;
-          e->cy      = pFrame->cy;
-          
+          e->fx = pFrame->fx;
+          e->fy = pFrame->fy;
+          e->cx = pFrame->cx;
+          e->cy = pFrame->cy;
+
           // 投影边设置 mappoint，此优化器只优化 frame 的 Tcw ，不优化 mappoint，mappoint 作为边的参数
           cv::Mat Xw = pMP->GetWorldPos();
           e->Xw[0]   = Xw.at<float>(0);
@@ -459,7 +459,7 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
   const float chi2Mono[4]   = {5.991, 5.991, 5.991, 5.991};
   const float chi2Stereo[4] = {7.815, 7.815, 7.815, 7.815};
   // 4次优化，每次的最大迭代次数
-  const int its[4]          = {10, 10, 10, 10};
+  const int its[4] = {10, 10, 10, 10};
 
   int nBad = 0;
   // 总共四次优化
@@ -531,13 +531,38 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
   return nInitialCorrespondences - nBad;
 }
 
+/**
+ * @brief Local Bundle Adjustment
+ *
+ * 1. Vertex:
+ *     - g2o::VertexSE3Expmap()，LocalKeyFrames，即当前关键帧的位姿、与当前关键帧相连的关键帧的位姿
+ *     - g2o::VertexSE3Expmap()，FixedCameras，即能观测到LocalMapPoints的关键帧（并且不属于LocalKeyFrames）的位姿，在优化中这些关键帧的位姿不变
+ *     - g2o::VertexSBAPointXYZ()，LocalMapPoints，即LocalKeyFrames能观测到的所有MapPoints的位置
+ * 2. Edge:
+ *     - g2o::EdgeSE3ProjectXYZ()，BaseBinaryEdge
+ *         + Vertex：关键帧的Tcw，MapPoint的Pw
+ *         + measurement：MapPoint在关键帧中的二维位置(u,v)
+ *         + InfoMatrix: invSigma2(与特征点所在的尺度有关)
+ *     - g2o::EdgeStereoSE3ProjectXYZ()，BaseBinaryEdge
+ *         + Vertex：关键帧的Tcw，MapPoint的Pw
+ *         + measurement：MapPoint在关键帧中的二维位置(ul,v,ur)
+ *         + InfoMatrix: invSigma2(与特征点所在的尺度有关)
+ *         
+ * @param pKF        KeyFrame
+ * @param pbStopFlag 是否停止优化的标志
+ * @param pMap       在优化后，更新状态时需要用到Map的互斥量mMutexMapUpdate
+ */
 void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap) {
-  // Local KeyFrames: First Breath Search from Current Keyframe
+  // 该优化函数用于LocalMapping线程的局部BA优化
+
+  // Local KeyFrames: First Breadth Search from Current Keyframe
   list<KeyFrame *> lLocalKeyFrames;
 
+  // 步骤1：将当前关键帧加入lLocalKeyFrames
   lLocalKeyFrames.push_back(pKF);
   pKF->mnBALocalForKF = pKF->mnId;
 
+  // 步骤2：找到关键帧连接的关键帧（一级相连），加入lLocalKeyFrames中
   const vector<KeyFrame *> vNeighKFs = pKF->GetVectorCovisibleKeyFrames();
   for (int i = 0, iend = vNeighKFs.size(); i < iend; i++) {
     KeyFrame *pKFi       = vNeighKFs[i];
@@ -547,29 +572,34 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   }
 
   // Local MapPoints seen in Local KeyFrames
+  // 步骤3：遍历lLocalKeyFrames中关键帧，将它们观测的MapPoints加入到lLocalMapPoints
   list<MapPoint *> lLocalMapPoints;
   for (list<KeyFrame *>::iterator lit = lLocalKeyFrames.begin(), lend = lLocalKeyFrames.end(); lit != lend; lit++) {
     vector<MapPoint *> vpMPs = (*lit)->GetMapPointMatches();
     for (vector<MapPoint *>::iterator vit = vpMPs.begin(), vend = vpMPs.end(); vit != vend; vit++) {
       MapPoint *pMP = *vit;
-      if (pMP)
+      if (pMP) {
         if (!pMP->isBad())
           if (pMP->mnBALocalForKF != pKF->mnId) {
             lLocalMapPoints.push_back(pMP);
-            pMP->mnBALocalForKF = pKF->mnId;
+            pMP->mnBALocalForKF = pKF->mnId;  // 防止重复添加
           }
+      }
     }
   }
 
   // Fixed Keyframes. Keyframes that see Local MapPoints but that are not Local Keyframes
+  // 步骤4：得到能被局部MapPoints观测到，但不属于局部关键帧的关键帧，这些关键帧在局部BA优化时不优化
   list<KeyFrame *> lFixedCameras;
   for (list<MapPoint *>::iterator lit = lLocalMapPoints.begin(), lend = lLocalMapPoints.end(); lit != lend; lit++) {
     map<KeyFrame *, size_t> observations = (*lit)->GetObservations();
     for (map<KeyFrame *, size_t>::iterator mit = observations.begin(), mend = observations.end(); mit != mend; mit++) {
       KeyFrame *pKFi = mit->first;
 
+      // pKFi->mnBALocalForKF!=pKF->mnId表示局部关键帧，
+      // 其它的关键帧虽然能观测到，但不属于局部关键帧
       if (pKFi->mnBALocalForKF != pKF->mnId && pKFi->mnBAFixedForKF != pKF->mnId) {
-        pKFi->mnBAFixedForKF = pKF->mnId;
+        pKFi->mnBAFixedForKF = pKF->mnId;  // 防止重复添加
         if (!pKFi->isBad())
           lFixedCameras.push_back(pKFi);
       }
@@ -577,6 +607,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   }
 
   // Setup optimizer
+  // 步骤5：构造g2o优化器
   g2o::SparseOptimizer optimizer;
   g2o::BlockSolver_6_3::LinearSolverType *linearSolver;
 
@@ -593,18 +624,20 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   unsigned long maxKFid = 0;
 
   // Set Local KeyFrame vertices
+  // 步骤6：添加顶点：Pose of Local KeyFrame
   for (list<KeyFrame *>::iterator lit = lLocalKeyFrames.begin(), lend = lLocalKeyFrames.end(); lit != lend; lit++) {
     KeyFrame *pKFi             = *lit;
     g2o::VertexSE3Expmap *vSE3 = new g2o::VertexSE3Expmap();
     vSE3->setEstimate(Converter::toSE3Quat(pKFi->GetPose()));
     vSE3->setId(pKFi->mnId);
-    vSE3->setFixed(pKFi->mnId == 0);
+    vSE3->setFixed(pKFi->mnId == 0);  //第一帧位置固定
     optimizer.addVertex(vSE3);
     if (pKFi->mnId > maxKFid)
       maxKFid = pKFi->mnId;
   }
 
   // Set Fixed KeyFrame vertices
+  // 步骤7：添加顶点：Pose of Fixed KeyFrame，注意这里调用了vSE3->setFixed(true)。
   for (list<KeyFrame *>::iterator lit = lFixedCameras.begin(), lend = lFixedCameras.end(); lit != lend; lit++) {
     KeyFrame *pKFi             = *lit;
     g2o::VertexSE3Expmap *vSE3 = new g2o::VertexSE3Expmap();
@@ -617,6 +650,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   }
 
   // Set MapPoint vertices
+  // 步骤7：添加3D顶点
   const int nExpectedSize = (lLocalKeyFrames.size() + lFixedCameras.size()) * lLocalMapPoints.size();
 
   vector<g2o::EdgeSE3ProjectXYZ *> vpEdgesMono;
@@ -641,6 +675,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   const float thHuberStereo = sqrt(7.815);
 
   for (list<MapPoint *>::iterator lit = lLocalMapPoints.begin(), lend = lLocalMapPoints.end(); lit != lend; lit++) {
+    // 添加顶点：MapPoint
     MapPoint *pMP                  = *lit;
     g2o::VertexSBAPointXYZ *vPoint = new g2o::VertexSBAPointXYZ();
     vPoint->setEstimate(Converter::toVector3d(pMP->GetWorldPos()));
@@ -651,7 +686,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
 
     const map<KeyFrame *, size_t> observations = pMP->GetObservations();
 
-    //Set edges
+    // Set edges
+    // 步骤8：对每一对关联的MapPoint和KeyFrame构建边
     for (map<KeyFrame *, size_t>::const_iterator mit = observations.begin(), mend = observations.end(); mit != mend; mit++) {
       KeyFrame *pKFi = mit->first;
 
@@ -722,6 +758,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
     if (*pbStopFlag)
       return;
 
+  // 步骤9：开始优化
   optimizer.initializeOptimization();
   optimizer.optimize(5);
 
@@ -733,6 +770,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
 
   if (bDoMore) {
     // Check inlier observations
+    // 步骤10：检测outlier，并设置下次不优化
     for (size_t i = 0, iend = vpEdgesMono.size(); i < iend; i++) {
       g2o::EdgeSE3ProjectXYZ *e = vpEdgesMono[i];
       MapPoint *pMP             = vpMapPointEdgeMono[i];
@@ -740,11 +778,12 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
       if (pMP->isBad())
         continue;
 
+      // 基于卡方检验计算出的阈值（假设测量有一个像素的偏差）
       if (e->chi2() > 5.991 || !e->isDepthPositive()) {
-        e->setLevel(1);
+        e->setLevel(1);  // 不优化
       }
 
-      e->setRobustKernel(0);
+      e->setRobustKernel(0);  // 不使用核函数
     }
 
     for (size_t i = 0, iend = vpEdgesStereo.size(); i < iend; i++) {
@@ -762,7 +801,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
     }
 
     // Optimize again without the outliers
-
+    // 步骤11：排除误差较大的outlier后再次优化
     optimizer.initializeOptimization(0);
     optimizer.optimize(10);
   }
@@ -771,6 +810,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   vToErase.reserve(vpEdgesMono.size() + vpEdgesStereo.size());
 
   // Check inlier observations
+  // 步骤12：在优化后重新计算误差，剔除连接误差比较大的关键帧和MapPoint
   for (size_t i = 0, iend = vpEdgesMono.size(); i < iend; i++) {
     g2o::EdgeSE3ProjectXYZ *e = vpEdgesMono[i];
     MapPoint *pMP             = vpMapPointEdgeMono[i];
@@ -778,6 +818,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
     if (pMP->isBad())
       continue;
 
+    // 基于卡方检验计算出的阈值（假设测量有一个像素的偏差）
     if (e->chi2() > 5.991 || !e->isDepthPositive()) {
       KeyFrame *pKFi = vpEdgeKFMono[i];
       vToErase.push_back(make_pair(pKFi, pMP));
@@ -800,6 +841,8 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   // Get Map Mutex
   unique_lock<mutex> lock(pMap->mMutexMapUpdate);
 
+  // 连接偏差比较大，在关键帧中剔除对该MapPoint的观测
+  // 连接偏差比较大，在MapPoint中剔除对该关键帧的观测
   if (!vToErase.empty()) {
     for (size_t i = 0; i < vToErase.size(); i++) {
       KeyFrame *pKFi = vToErase[i].first;
@@ -810,6 +853,7 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool *pbStopFlag, Map *pMap
   }
 
   // Recover optimized data
+  // 步骤13：优化后更新关键帧位姿以及MapPoints的位置、平均观测方向等属性
 
   //Keyframes
   for (list<KeyFrame *>::iterator lit = lLocalKeyFrames.begin(), lend = lLocalKeyFrames.end(); lit != lend; lit++) {
