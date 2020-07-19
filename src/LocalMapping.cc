@@ -77,15 +77,27 @@ void LocalMapping::Run() {
 
       mbAbortBA = false;
 
+      // 已经处理完队列中的最后的一个关键帧，并且闭环检测没有请求停止LocalMapping
       if (!CheckNewKeyFrames() && !stopRequested()) {
         // Local BA
+        // 
         if (mpMap->KeyFramesInMap() > 2)
+          // 局部BA，与当前帧共视的所有帧 组成一个局部
+          // 通过局部BA，优化局部帧的位姿和包含的地图点三维坐标
           Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame, &mbAbortBA, mpMap);
 
         // Check redundant local Keyframes
+        // VI-E local keyframes culling
+        // 检测并剔除当前帧相邻的关键帧中冗余的关键帧
+        // 剔除的标准是：该关键帧的90%的MapPoints可以被其它关键帧观测到
+        // trick!
+        // Tracking中先把关键帧交给LocalMapping线程
+        // 并且在Tracking中InsertKeyFrame函数的条件比较松，交给LocalMapping线程的关键帧会比较密
+        // 在这里再删除冗余的关键帧
         KeyFrameCulling();
       }
 
+      // 将当前帧加入到闭环检测队列中
       mpLoopCloser->InsertKeyFrame(mpCurrentKeyFrame);
     } else if (Stop()) {
       // Safe area to stop
