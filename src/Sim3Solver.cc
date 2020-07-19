@@ -129,6 +129,7 @@ void Sim3Solver::SetRansacParameters(double probability, int minInliers, int max
 }
 
 // Ransac求解mvX3Dc1和mvX3Dc2之间Sim3，函数返回mvX3Dc2到mvX3Dc1的Sim3变换
+// sim3 是一个4x4相似变换矩阵
 cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers) {
   bNoMore   = false;
   vbInliers = vector<bool>(mN1, false);
