@@ -92,7 +92,7 @@ class ORBextractor {
                                               const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);
 
   void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint>> &allKeypoints);
-  std::vector<cv::Point> pattern;
+  std::vector<cv::Point> pattern; // 在 ORBextractor.cc 中硬编码 static int bit_pattern_31_[256 * 4] =
 
   int nfeatures;
   double scaleFactor;

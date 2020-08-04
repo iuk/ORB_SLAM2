@@ -211,6 +211,7 @@ void MapPoint::SetBadFlag() {
   mpMap->EraseMapPoint(this);
 }
 
+// 获取新 MapPoint
 MapPoint *MapPoint::GetReplaced() {
   unique_lock<mutex> lock1(mMutexFeatures);
   unique_lock<mutex> lock2(mMutexPos);

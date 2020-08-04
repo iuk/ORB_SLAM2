@@ -384,6 +384,7 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
           const float invSigma2 = pFrame->mvInvLevelSigma2[kpUn.octave];
           e->setInformation(Eigen::Matrix2d::Identity() * invSigma2);
 
+          // 设置鲁棒核
           g2o::RobustKernelHuber *rk = new g2o::RobustKernelHuber;
           e->setRobustKernel(rk);
           rk->setDelta(deltaMono);
@@ -476,20 +477,28 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
       const size_t idx = vnIndexEdgeMono[i];
 
       if (pFrame->mvbOutlier[idx]) {
+        // NOTE g2o只会计算active edge的误差
         e->computeError();
       }
 
       const float chi2 = e->chi2();
 
+      // 如果 chi2 大，设置为outlier
+      // // chi2 就是 error*\Omega*error, 如果这个数很大，说明此边的值与其他边很不相符
       if (chi2 > chi2Mono[it]) {
         pFrame->mvbOutlier[idx] = true;
+        // 这里每个边都有一个level的概念，默认情况下，g2o只处理level=0的边，
+        // 在orbslam中，如果确定某个边的重投影误差过大，则把level设置为1，也就是舍弃这个边对于整个优化的影响
         e->setLevel(1);
         nBad++;
-      } else {
+      }
+      // 如果 chi2 下，设置为inlier 
+      else {
         pFrame->mvbOutlier[idx] = false;
         e->setLevel(0);
       }
 
+      // 除了前两次优化需要RobustKernel以外, 其余的优化都不需要
       if (it == 2)
         e->setRobustKernel(0);
     }

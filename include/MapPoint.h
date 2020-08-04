@@ -136,6 +136,7 @@ protected:
 
      // Bad flag (we do not currently erase MapPoint from memory)
      bool mbBad;
+     // 一个指向新 MapPoint 的指针
      MapPoint* mpReplaced;
 
      // Scale invariance distances

@@ -218,7 +218,7 @@ void Initializer::FindHomography(vector<bool> &vbMatchesInliers,
     H21i = T2inv * Hn * T1;
     H12i = H21i.inv();
 
-    // 利用重投影误差为当次RANSAC的结果评分
+    // 利用 ==对称转移误差== 为当次RANSAC的结果评分
     // mSigma 在初始化第一帧时被设置为 1.0
     // 得到H的分数 和 此H下的 inlier 点对
     currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
@@ -230,7 +230,7 @@ void Initializer::FindHomography(vector<bool> &vbMatchesInliers,
       vbMatchesInliers = vbCurrentInliers;
       score            = currentScore;
     }
-  }
+  } // 结束 迭代 200 次
 }
 
 /**
@@ -494,11 +494,19 @@ float Initializer::CheckHomography(
       vbMatchesInliers[i] = true;
     else
       vbMatchesInliers[i] = false;
-  }
+  } // 完成遍历所有点对
 
   return score;
 }
 
+/**
+ * @brief 对给定的fundamental matrix打分
+ * 
+ * @see
+ * - Author's paper - IV. AUTOMATIC MAP INITIALIZATION （2）
+ * - Multiple View Geometry in Computer Vision - symmetric transfer errors: 4.2.2 Geometric distance
+ * - Multiple View Geometry in Computer Vision - model selection 4.7.1 RANSAC
+ */
 float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesInliers, float sigma) {
   const int N = mvMatches12.size();
 
@@ -515,7 +523,7 @@ float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesI
   vbMatchesInliers.resize(N);
 
   float score = 0;
-
+  // 基于卡方检验计算出的阈值（假设测量有一个像素的偏差）
   const float th      = 3.841;
   const float thScore = 5.991;
 
@@ -534,11 +542,11 @@ float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesI
 
     // Reprojection error in second image
     // l2=F21x1=(a2,b2,c2)
-
+    // F21x1可以算出x1在图像中x2对应的线l
     const float a2 = f11 * u1 + f12 * v1 + f13;
     const float b2 = f21 * u1 + f22 * v1 + f23;
     const float c2 = f31 * u1 + f32 * v1 + f33;
-
+    // x2应该在l这条线上:x2点乘l = 0
     const float num2 = a2 * u2 + b2 * v2 + c2;
 
     const float squareDist1 = num2 * num2 / (a2 * a2 + b2 * b2);
@@ -577,6 +585,22 @@ float Initializer::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesI
   return score;
 }
 
+//                          |0 -1  0|
+// E = U Sigma V'   let W = |1  0  0|
+//                          |0  0  1|
+// 得到4个解 E = [R|t]
+// R1 = UWV' R2 = UW'V' t1 = U3 t2 = -U3
+
+/**
+ * @brief 从F恢复R t
+ * 
+ * 度量重构
+ * 1. 由Fundamental矩阵结合相机内参K，得到Essential矩阵: \f$ E = k'^T F k \f$
+ * 2. SVD分解得到R t
+ * 3. 进行cheirality check, 从四个解中找出最合适的解
+ * 
+ * @see Multiple View Geometry in Computer Vision - Result 9.19 p259
+ */
 bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv::Mat &K,
                                cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D,
                                vector<bool> &vbTriangulated, float minParallax,
@@ -592,6 +616,8 @@ bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv:
   cv::Mat R1, R2, t;
 
   // Recover the 4 motion hypotheses
+  // 虽然这个函数对t有归一化，但并没有决定单目整个SLAM过程的尺度
+  // 因为CreateInitialMapMonocular函数对3D点深度会缩放，然后反过来对 t 有改变
   DecomposeE(E21, R1, R2, t);
 
   cv::Mat t1 = t;
@@ -625,11 +651,13 @@ bool Initializer::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv:
     nsimilar++;
 
   // If there is not a clear winner or not enough triangulated points reject initialization
+  // 四个结果中如果没有明显的最优结果，则返回失败
   if (maxGood < nMinGood || nsimilar > 1) {
     return false;
   }
 
   // If best reconstruction has enough parallax initialize
+  // 比较大的视差角
   if (maxGood == nGood1) {
     if (parallax1 > minParallax) {
       vP3D           = vP3D1;

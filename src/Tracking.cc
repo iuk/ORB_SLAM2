@@ -252,6 +252,7 @@ Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp) {
   // 第二步：跟踪
   Track();
 
+  // 返回当前帧位姿
   return mCurrentFrame.mTcw.clone();
 }
 
@@ -281,8 +282,8 @@ void Tracking::Track() {
   // System is initialized. Track Frame.
   else {
     // bOK为临时变量，用于表示每个函数是否执行成功
-    bool bOK;  
-    // Initial camera pose estimation using motion model 
+    bool bOK;
+    // Initial camera pose estimation using motion model
     // or relocalization (if tracking is lost)
     // 在viewer中有个开关 menuLocalizationMode，有它控制是否 ActivateLocalizationMode，
     // 并最终管控mbOnlyTracking
@@ -293,11 +294,10 @@ void Tracking::Track() {
       // Local Mapping is activated. This is the normal behaviour, unless
       // you explicitly activate the "only tracking" mode.
       // 如果处于正常状态
-      if (mState == OK) 
-      {
+      if (mState == OK) {
         // Local Mapping might have changed some MapPoints tracked in last frame
-        // 检查并更新上一帧被替换的MapPoints
-        // 更新Fuse函数和SearchAndFuse函数替换的MapPoints
+        // 检查并更新LastFrame被替换的MapPoints
+        // 替换操作发生在 Fuse函数和SearchAndFuse函数
         CheckReplacedInLastFrame();
 
         // 步骤2.1：跟踪上一帧或者参考帧或者重定位
@@ -335,7 +335,9 @@ void Tracking::Track() {
       // tracking跟丢了
       if (mState == LOST) {
         bOK = Relocalization();
-      } else {
+      } 
+      // 如果没跟丢
+      else {
         if (!mbVO) {
           // In last frame we tracked enough MapPoints in the map
 
@@ -398,7 +400,7 @@ void Tracking::Track() {
     if (!mbOnlyTracking) {
       if (bOK)
         bOK = TrackLocalMap();
-    } 
+    }
     // 如果只定位
     else {
       // mbVO true means that there are few matches to MapPoints in the map. We cannot retrieve
@@ -441,7 +443,8 @@ void Tracking::Track() {
       }
 
       // Delete temporal MapPoints
-      for (list<MapPoint *>::iterator lit = mlpTemporalPoints.begin(), lend = mlpTemporalPoints.end(); lit != lend; lit++) {
+      for (list<MapPoint *>::iterator lit = mlpTemporalPoints.begin(), lend = mlpTemporalPoints.end();
+           lit != lend; lit++) {
         MapPoint *pMP = *lit;
         delete pMP;
       }
@@ -593,6 +596,8 @@ void Tracking::MonocularInitialization() {
     // 步骤3：在mInitialFrame与mCurrentFrame中找匹配的特征点对
     // mvbPrevMatched为前一帧的特征点，存储了mInitialFrame中哪些点将进行接下来的匹配
     // mvIniMatches存储mInitialFrame,mCurrentFrame之间匹配的特征点
+    // @param1 nnratio  ratio of the best and the second score
+    // @param2 checkOri check orientation
     ORBmatcher matcher(0.9, true);
     int nmatches =  // 输出 对应上的点数
         matcher.SearchForInitialization(
@@ -795,7 +800,7 @@ void Tracking::CreateInitialMapMonocular() {
 }
 
 /**
- * @brief 检查上一帧中的MapPoints是否被替换
+ * @brief 检查上一帧中的 MapPoints 是否被替换
  * keyframe在local_mapping和loopclosure中存在fuse mappoint。
  * 由于这些mappoint被改变了，且只更新了关键帧的mappoint，对于mLastFrame普通帧，也要检查并更新mappoint
  * @see LocalMapping::SearchInNeighbors()
@@ -806,6 +811,7 @@ void Tracking::CheckReplacedInLastFrame() {
 
     if (pMP) {
       MapPoint *pRep = pMP->GetReplaced();
+      // 如果被标记为被替换为新的 mappoing，则重新指向新的 mappoing
       if (pRep) {
         mLastFrame.mvpMapPoints[i] = pRep;
       }
@@ -867,18 +873,30 @@ bool Tracking::TrackReferenceKeyFrame() {
   return nmatchesMap >= 10;
 }
 
+/**
+ * @brief 双目或rgbd摄像头根据深度值为上一帧产生新的MapPoints
+ *
+ * 在双目和rgbd情况下，选取一些深度小一些的点（可靠一些） \n
+ * 可以通过深度值产生一些新的MapPoints
+ */
 void Tracking::UpdateLastFrame() {
   // Update pose according to reference keyframe
+  // 步骤1：更新最近一帧的位姿
   KeyFrame *pRef = mLastFrame.mpReferenceKF;
   cv::Mat Tlr    = mlRelativeFramePoses.back();
 
   mLastFrame.SetPose(Tlr * pRef->GetPose());
-
+  // 如果上一帧为关键帧，或者单目的情况，则退出
   if (mnLastKeyFrameId == mLastFrame.mnId || mSensor == System::MONOCULAR || !mbOnlyTracking)
     return;
 
+  // 步骤2：对于双目或rgbd摄像头，为上一帧临时生成新的MapPoints
+  // 注意这些MapPoints不加入到Map中，在tracking的最后会删除
+  // 跟踪过程中需要将将上一帧的MapPoints投影到当前帧可以缩小匹配范围，加快当前帧与上一帧进行特征点匹配
+
   // Create "visual odometry" MapPoints
   // We sort points according to their measured depth by the stereo/RGB-D sensor
+  // 步骤2.1：得到上一帧有深度值的特征点
   vector<pair<float, int> > vDepthIdx;
   vDepthIdx.reserve(mLastFrame.N);
   for (int i = 0; i < mLastFrame.N; i++) {
@@ -890,11 +908,12 @@ void Tracking::UpdateLastFrame() {
 
   if (vDepthIdx.empty())
     return;
-
+  // 步骤2.2：按照深度从小到大排序
   sort(vDepthIdx.begin(), vDepthIdx.end());
 
   // We insert all close points (depth<mThDepth)
   // If less than 100 close points, we insert the 100 closest ones.
+  // 步骤2.3：将距离比较近的点包装成MapPoints
   int nPoints = 0;
   for (size_t j = 0; j < vDepthIdx.size(); j++) {
     int i = vDepthIdx[j].second;
@@ -909,11 +928,17 @@ void Tracking::UpdateLastFrame() {
     }
 
     if (bCreateNew) {
+      // 这些生成MapPoints后并没有通过：
+      // a.AddMapPoint、
+      // b.AddObservation、
+      // c.ComputeDistinctiveDescriptors、
+      // d.UpdateNormalAndDepth添加属性，
+      // 这些MapPoint仅仅为了提高双目和RGBD的跟踪成功率
       cv::Mat x3D      = mLastFrame.UnprojectStereo(i);
       MapPoint *pNewMP = new MapPoint(x3D, mpMap, &mLastFrame, i);
 
       mLastFrame.mvpMapPoints[i] = pNewMP;
-
+      // 标记为临时添加的MapPoint，之后在CreateNewKeyFrame之前会全部删除
       mlpTemporalPoints.push_back(pNewMP);
       nPoints++;
     } else {
@@ -925,13 +950,28 @@ void Tracking::UpdateLastFrame() {
   }
 }
 
+/**
+ * @brief 根据匀速度模型对上一帧的MapPoints进行跟踪
+ * 
+ * 1. 非单目情况，需要对上一帧产生一些新的MapPoints（临时）
+ * 2. 将上一帧的MapPoints投影到当前帧的图像平面上，在投影的位置进行区域匹配
+ * 3. 根据匹配对估计当前帧的姿态
+ * 4. 根据姿态剔除误匹配
+ * @return 如果匹配数大于10，返回true
+ * @see V-B Initial Pose Estimation From Previous Frame
+ */
 bool Tracking::TrackWithMotionModel() {
   ORBmatcher matcher(0.9, true);
 
   // Update last frame pose according to its reference keyframe
   // Create "visual odometry" points if in Localization Mode
+  // 步骤1：对于双目或rgbd摄像头，根据深度值为上一关键帧生成新的MapPoints
+  // （跟踪过程中需要将当前帧与上一帧进行特征点匹配，将上一帧的MapPoints投影到当前帧可以缩小匹配范围）
+  // 在跟踪过程中，去除outlier的MapPoint，如果不及时增加MapPoint会逐渐减少
+  // 这个函数的功能就是补充增加RGBD和双目相机上一帧的MapPoints数
   UpdateLastFrame();
-
+  // 根据Const Velocity Model(认为这两帧之间的相对运动和之前两帧间相对运动相同)估计当前帧的位姿
+  // mVelocity为最近一次前后帧位姿之差
   mCurrentFrame.SetPose(mVelocity * mLastFrame.mTcw);
 
   fill(mCurrentFrame.mvpMapPoints.begin(), mCurrentFrame.mvpMapPoints.end(), static_cast<MapPoint *>(NULL));
@@ -942,9 +982,13 @@ bool Tracking::TrackWithMotionModel() {
     th = 15;
   else
     th = 7;
+
+  // 步骤2：根据匀速度模型进行对上一帧的MapPoints进行跟踪
+  // 根据上一帧特征点对应的3D点投影的位置缩小特征点匹配范围
   int nmatches = matcher.SearchByProjection(mCurrentFrame, mLastFrame, th, mSensor == System::MONOCULAR);
 
   // If few matches, uses a wider window search
+  // 如果跟踪的点少，则扩大搜索半径再来一次
   if (nmatches < 20) {
     fill(mCurrentFrame.mvpMapPoints.begin(), mCurrentFrame.mvpMapPoints.end(), static_cast<MapPoint *>(NULL));
     nmatches = matcher.SearchByProjection(mCurrentFrame, mLastFrame, 2 * th, mSensor == System::MONOCULAR);
@@ -954,9 +998,11 @@ bool Tracking::TrackWithMotionModel() {
     return false;
 
   // Optimize frame pose with all matches
+  // 步骤3：优化位姿，only-pose BA优化
   Optimizer::PoseOptimization(&mCurrentFrame);
 
   // Discard outliers
+  // 步骤4：优化位姿后剔除outlier的mvpMapPoints
   int nmatchesMap = 0;
   for (int i = 0; i < mCurrentFrame.N; i++) {
     if (mCurrentFrame.mvpMapPoints[i]) {
@@ -1197,7 +1243,8 @@ void Tracking::SearchLocalPoints() {
 
   // Project points in frame and check its visibility
   // 步骤2：将所有局部MapPoints投影到当前帧，判断是否在视野范围内，然后进行投影匹配
-  for (vector<MapPoint *>::iterator vit = mvpLocalMapPoints.begin(), vend = mvpLocalMapPoints.end(); vit != vend; vit++) {
+  for (vector<MapPoint *>::iterator vit = mvpLocalMapPoints.begin(), vend = mvpLocalMapPoints.end();
+       vit != vend; vit++) {
     // 已经被当前帧观测到MapPoint不再判断是否能被当前帧观测到
     MapPoint *pMP = *vit;
     if (pMP->mnLastFrameSeen == mCurrentFrame.mnId)
@@ -1212,7 +1259,7 @@ void Tracking::SearchLocalPoints() {
       // 只有在视野范围内的MapPoints才参与之后的投影匹配
       nToMatch++;
     }
-  } 
+  }
 
   if (nToMatch > 0) {
     ORBmatcher matcher(0.8);
@@ -1255,11 +1302,13 @@ void Tracking::UpdateLocalPoints() {
   // 步骤1：清空局部MapPoints
   mvpLocalMapPoints.clear();
   // 步骤2：遍历局部关键帧mvpLocalKeyFrames
-  for (vector<KeyFrame *>::const_iterator itKF = mvpLocalKeyFrames.begin(), itEndKF = mvpLocalKeyFrames.end(); itKF != itEndKF; itKF++) {
+  for (vector<KeyFrame *>::const_iterator itKF = mvpLocalKeyFrames.begin(), itEndKF = mvpLocalKeyFrames.end();
+       itKF != itEndKF; itKF++) {
     KeyFrame *pKF                  = *itKF;
     const vector<MapPoint *> vpMPs = pKF->GetMapPointMatches();
     // 步骤2：将局部关键帧的MapPoints添加到mvpLocalMapPoints
-    for (vector<MapPoint *>::const_iterator itMP = vpMPs.begin(), itEndMP = vpMPs.end(); itMP != itEndMP; itMP++) {
+    for (vector<MapPoint *>::const_iterator itMP = vpMPs.begin(), itEndMP = vpMPs.end();
+         itMP != itEndMP; itMP++) {
       MapPoint *pMP = *itMP;
       if (!pMP)
         continue;
@@ -1283,19 +1332,19 @@ void Tracking::UpdateLocalKeyFrames() {
   // Each map point vote for the keyframes in which it has been observed
   // 步骤1：遍历当前帧的MapPoints，记录所有能观测到当前帧MapPoints的关键帧
   map<KeyFrame *, int> keyframeCounter;
-  
+
   // 遍历当前帧的 keypoint
   for (int i = 0; i < mCurrentFrame.N; i++) {
     // 如果该 keypoint 有对应的 mappoint
     if (mCurrentFrame.mvpMapPoints[i]) {
       // 取出 该mappoint
       MapPoint *pMP = mCurrentFrame.mvpMapPoints[i];
-      if (!pMP->isBad()) 
-      {
+      if (!pMP->isBad()) {
         // 取出能观察到该MapPoints的所有 keyframe
         const map<KeyFrame *, size_t> observations = pMP->GetObservations();
         // 遍历所有的 共视 keyframe
-        for (map<KeyFrame *, size_t>::const_iterator it = observations.begin(), itend = observations.end(); it != itend; it++)
+        for (map<KeyFrame *, size_t>::const_iterator it = observations.begin(), itend = observations.end();
+             it != itend; it++)
           // 加入到 keyframe 统计器 中
           keyframeCounter[it->first]++;
       }
@@ -1311,19 +1360,20 @@ void Tracking::UpdateLocalKeyFrames() {
 
   int max          = 0;
   KeyFrame *pKFmax = static_cast<KeyFrame *>(NULL);
-  
+
   // 步骤2：更新局部关键帧（mvpLocalKeyFrames），添加局部关键帧有三个策略
   // 先清空局部关键帧
   // 制作新的 localkeyframes(局部关键帧)
   mvpLocalKeyFrames.clear();
   mvpLocalKeyFrames.reserve(3 * keyframeCounter.size());
 
-  // All keyframes that observe a map point are included in the local map. 
+  // All keyframes that observe a map point are included in the local map.
   // Also check which keyframe shares most points
   // V-D K1: shares the map points with current frame
   // 策略1：能观测到当前帧MapPoints的关键帧作为局部关键帧
   // 遍历 keyframe 统计器
-  for (map<KeyFrame *, int>::const_iterator it = keyframeCounter.begin(), itEnd = keyframeCounter.end(); it != itEnd; it++) {
+  for (map<KeyFrame *, int>::const_iterator it = keyframeCounter.begin(), itEnd = keyframeCounter.end();
+       it != itEnd; it++) {
     KeyFrame *pKF = it->first;
 
     if (pKF->isBad())
@@ -1338,11 +1388,12 @@ void Tracking::UpdateLocalKeyFrames() {
     pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId;
   }
 
-  // Include also some not-already-included keyframes that are 
+  // Include also some not-already-included keyframes that are
   // neighbors to already-included keyframes
   // V-D K2: neighbors to K1 in the covisibility graph
   // 策略2：与策略1得到的局部关键帧共视程度很高的关键帧作为局部关键帧
-  for (vector<KeyFrame *>::const_iterator itKF = mvpLocalKeyFrames.begin(), itEndKF = mvpLocalKeyFrames.end(); itKF != itEndKF; itKF++) {
+  for (vector<KeyFrame *>::const_iterator itKF = mvpLocalKeyFrames.begin(), itEndKF = mvpLocalKeyFrames.end();
+       itKF != itEndKF; itKF++) {
     // Limit the number of keyframes
     if (mvpLocalKeyFrames.size() > 80)
       break;
@@ -1352,7 +1403,8 @@ void Tracking::UpdateLocalKeyFrames() {
     // 策略2.1:最佳共视的10帧
     const vector<KeyFrame *> vNeighs = pKF->GetBestCovisibilityKeyFrames(10);
 
-    for (vector<KeyFrame *>::const_iterator itNeighKF = vNeighs.begin(), itEndNeighKF = vNeighs.end(); itNeighKF != itEndNeighKF; itNeighKF++) {
+    for (vector<KeyFrame *>::const_iterator itNeighKF = vNeighs.begin(), itEndNeighKF = vNeighs.end();
+         itNeighKF != itEndNeighKF; itNeighKF++) {
       KeyFrame *pNeighKF = *itNeighKF;
       if (!pNeighKF->isBad()) {
         if (pNeighKF->mnTrackReferenceForFrame != mCurrentFrame.mnId) {
@@ -1386,7 +1438,7 @@ void Tracking::UpdateLocalKeyFrames() {
       }
     }
   }
-  
+
   // V-D Kref： shares the most map points with current frame
   // 步骤3：更新当前帧的参考关键帧，与自己共视程度最高的关键帧作为参考关键帧
   if (pKFmax) {
@@ -1397,11 +1449,14 @@ void Tracking::UpdateLocalKeyFrames() {
 
 bool Tracking::Relocalization() {
   // Compute Bag of Words Vector
+  // 步骤1：计算当前帧特征点的Bow映射
   mCurrentFrame.ComputeBoW();
 
   // Relocalization is performed when tracking is lost
   // Track Lost: Query KeyFrame Database for keyframe candidates for relocalisation
-  vector<KeyFrame *> vpCandidateKFs = mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame);
+  // 步骤2：找到与当前帧相似的候选关键帧
+  vector<KeyFrame *> vpCandidateKFs =
+      mpKeyFrameDB->DetectRelocalizationCandidates(&mCurrentFrame);
 
   if (vpCandidateKFs.empty())
     return false;
@@ -1423,11 +1478,13 @@ bool Tracking::Relocalization() {
 
   int nCandidates = 0;
 
+  // 遍历所有候选关键帧
   for (int i = 0; i < nKFs; i++) {
     KeyFrame *pKF = vpCandidateKFs[i];
     if (pKF->isBad())
       vbDiscarded[i] = true;
     else {
+      // 步骤3：通过BoW进行匹配
       int nmatches = matcher.SearchByBoW(pKF, mCurrentFrame, vvpMapPointMatches[i]);
       if (nmatches < 15) {
         vbDiscarded[i] = true;
@@ -1455,7 +1512,7 @@ bool Tracking::Relocalization() {
       vector<bool> vbInliers;
       int nInliers;
       bool bNoMore;
-
+      // 步骤4：通过EPnP算法估计姿态
       PnPsolver *pSolver = vpPnPsolvers[i];
       cv::Mat Tcw        = pSolver->iterate(5, bNoMore, vbInliers, nInliers);
 
@@ -1480,7 +1537,7 @@ bool Tracking::Relocalization() {
           } else
             mCurrentFrame.mvpMapPoints[j] = NULL;
         }
-
+        // 步骤5：通过PoseOptimization对姿态进行优化求解
         int nGood = Optimizer::PoseOptimization(&mCurrentFrame);
 
         if (nGood < 10)
@@ -1491,6 +1548,7 @@ bool Tracking::Relocalization() {
             mCurrentFrame.mvpMapPoints[io] = static_cast<MapPoint *>(NULL);
 
         // If few inliers, search by projection in a coarse window and optimize again
+        // 步骤6：如果内点较少，则通过投影的方式对之前未匹配的点进行匹配，再进行优化求解
         if (nGood < 50) {
           int nadditional = matcher2.SearchByProjection(mCurrentFrame, vpCandidateKFs[i], sFound, 10, 100);
 

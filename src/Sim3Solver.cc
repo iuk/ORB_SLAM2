@@ -215,16 +215,19 @@ void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C) {
 }
 
 void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2) {
+  // ！！！！！！！这段代码一定要看这篇论文！！！！！！！！！！！
   // Custom implementation of:
   // Horn 1987, Closed-form solution of absolute orientataion using unit quaternions
 
   // Step 1: Centroid and relative coordinates
-
+  // Step 1: Centroid and relative coordinates（模型坐标系）
   cv::Mat Pr1(P1.size(), P1.type());  // Relative coordinates to centroid (set 1)
   cv::Mat Pr2(P2.size(), P2.type());  // Relative coordinates to centroid (set 2)
   cv::Mat O1(3, 1, Pr1.type());       // Centroid of P1
   cv::Mat O2(3, 1, Pr2.type());       // Centroid of P2
 
+  // O1和O2分别为P1和P2矩阵中3D点的质心
+  // Pr1和Pr2为减去质心后的3D点
   ComputeCentroid(P1, Pr1, O1);
   ComputeCentroid(P2, Pr2, O2);
 
@@ -259,7 +262,8 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2) {
   cv::Mat eval, evec;
 
   cv::eigen(N, eval, evec);  //evec[0] is the quaternion of the desired rotation
-
+                             // N矩阵最大特征值（第一个特征值）对应特征向量就是要求的四元数死（q0 q1 q2 q3）
+  // 将(q1 q2 q3)放入vec行向量，vec就是四元数旋转轴乘以sin(ang/2)
   cv::Mat vec(1, 3, evec.type());
   (evec.row(0).colRange(1, 4)).copyTo(vec);  //extract imaginary part of the quaternion (sin*axis)
 
@@ -277,8 +281,8 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2) {
   cv::Mat P3 = mR12i * Pr2;
 
   // Step 6: Scale
-
   if (!mbFixScale) {
+    // 论文中还有一个求尺度的公式，p632右中的位置，那个公式不用考虑旋转
     double nom = Pr1.dot(P3);
     cv::Mat aux_P3(P3.size(), P3.type());
     aux_P3 = P3;

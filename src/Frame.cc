@@ -394,6 +394,7 @@ bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit) {
  * @param maxLevel 最大尺度
  * @return         满足条件的特征点的序号
  */
+// 获取一定范围内的所有特征点 ID
 vector<size_t> Frame::GetFeaturesInArea(
     const float &x, const float &y, const float &r,
     const int minLevel, const int maxLevel) const {
