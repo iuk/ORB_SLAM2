@@ -1581,13 +1581,16 @@ bool Tracking::Relocalization() {
           bMatch = true;
           break;
         }
-      }
-    }
-  }
+      }// if果通过 pnp 获得初始 位姿
+    }// for遍历所有 候选重定位关键帧
+  }// while 还没有找到匹配的重定位帧
 
+  // 如果没有找到重定位匹配帧
   if (!bMatch) {
     return false;
-  } else {
+  } 
+  // 如果找到了
+  else {
     mnLastRelocFrameId = mCurrentFrame.mnId;
     return true;
   }

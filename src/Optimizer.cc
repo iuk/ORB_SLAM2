@@ -492,7 +492,7 @@ int Optimizer::PoseOptimization(Frame *pFrame) {
         e->setLevel(1);
         nBad++;
       }
-      // 如果 chi2 下，设置为inlier 
+      // 如果 chi2 下，设置为inlier
       else {
         pFrame->mvbOutlier[idx] = false;
         e->setLevel(0);
@@ -1143,12 +1143,43 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
   }
 }
 
-int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &vpMatches1, g2o::Sim3 &g2oS12, const float th2, const bool bFixScale) {
+/**
+ * @brief 形成闭环时进行Sim3优化
+ *
+ * 1. Vertex:
+ *     - g2o::VertexSim3Expmap()，两个关键帧的位姿
+ *     - g2o::VertexSBAPointXYZ()，两个关键帧共有的MapPoints
+ * 2. Edge:
+ *     - g2o::EdgeSim3ProjectXYZ()，BaseBinaryEdge
+ *         + Vertex：关键帧的Sim3，MapPoint的Pw
+ *         + measurement：MapPoint在关键帧中的二维位置(u,v)
+ *         + InfoMatrix: invSigma2(与特征点所在的尺度有关)
+ *     - g2o::EdgeInverseSim3ProjectXYZ()，BaseBinaryEdge
+ *         + Vertex：关键帧的Sim3，MapPoint的Pw
+ *         + measurement：MapPoint在关键帧中的二维位置(u,v)
+ *         + InfoMatrix: invSigma2(与特征点所在的尺度有关)
+ *         
+ * @param pKF1        KeyFrame
+ * @param pKF2        KeyFrame
+ * @param vpMatches1  两个关键帧的匹配关系
+ * @param g2oS12      两个关键帧间的Sim3变换
+ * @param th2         核函数阈值
+ * @param bFixScale   是否优化尺度，弹目进行尺度优化，双目不进行尺度优化
+ */
+int Optimizer::OptimizeSim3(KeyFrame *pKF1,
+                            KeyFrame *pKF2,
+                            vector<MapPoint *> &vpMatches1,
+                            g2o::Sim3 &g2oS12,
+                            const float th2,
+                            const bool bFixScale) {
+  // 步骤1：初始化g2o优化器
+  // 先构造求解器
   g2o::SparseOptimizer optimizer;
+  // 构造线性方程求解器，Hx = -b的求解器
   g2o::BlockSolverX::LinearSolverType *linearSolver;
-
+  // 使用dense的求解器，（常见非dense求解器有cholmod线性求解器和shur补线性求解器）
   linearSolver = new g2o::LinearSolverDense<g2o::BlockSolverX::PoseMatrixType>();
-
+  // 使用L-M迭代
   g2o::BlockSolverX *solver_ptr = new g2o::BlockSolverX(linearSolver);
 
   g2o::OptimizationAlgorithmLevenberg *solver = new g2o::OptimizationAlgorithmLevenberg(solver_ptr);
@@ -1165,15 +1196,16 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
   const cv::Mat t2w = pKF2->GetTranslation();
 
   // Set Sim3 vertex
+  // 步骤2.1 添加Sim3顶点
   g2o::VertexSim3Expmap *vSim3 = new g2o::VertexSim3Expmap();
   vSim3->_fix_scale            = bFixScale;
   vSim3->setEstimate(g2oS12);
   vSim3->setId(0);
-  vSim3->setFixed(false);
-  vSim3->_principle_point1[0] = K1.at<float>(0, 2);
-  vSim3->_principle_point1[1] = K1.at<float>(1, 2);
-  vSim3->_focal_length1[0]    = K1.at<float>(0, 0);
-  vSim3->_focal_length1[1]    = K1.at<float>(1, 1);
+  vSim3->setFixed(false);                            // 优化Sim3顶点
+  vSim3->_principle_point1[0] = K1.at<float>(0, 2);  // 光心横坐标cx
+  vSim3->_principle_point1[1] = K1.at<float>(1, 2);  // 光心纵坐标cy
+  vSim3->_focal_length1[0]    = K1.at<float>(0, 0);  // 焦距 fx
+  vSim3->_focal_length1[1]    = K1.at<float>(1, 1);  // 焦距 fy
   vSim3->_principle_point2[0] = K2.at<float>(0, 2);
   vSim3->_principle_point2[1] = K2.at<float>(1, 2);
   vSim3->_focal_length2[0]    = K2.at<float>(0, 0);
@@ -1183,7 +1215,9 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
   // Set MapPoint vertices
   const int N                           = vpMatches1.size();
   const vector<MapPoint *> vpMapPoints1 = pKF1->GetMapPointMatches();
+  //pKF2对应的MapPoints到pKF1的投影
   vector<g2o::EdgeSim3ProjectXYZ *> vpEdges12;
+  //pKF1对应的MapPoints到pKF2的投影
   vector<g2o::EdgeInverseSim3ProjectXYZ *> vpEdges21;
   vector<size_t> vnIndexEdge;
 
@@ -1198,7 +1232,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
   for (int i = 0; i < N; i++) {
     if (!vpMatches1[i])
       continue;
-
+    // pMP1和pMP2是匹配的MapPoints
     MapPoint *pMP1 = vpMapPoints1[i];
     MapPoint *pMP2 = vpMatches1[i];
 
@@ -1209,6 +1243,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
 
     if (pMP1 && pMP2) {
       if (!pMP1->isBad() && !pMP2->isBad() && i2 >= 0) {
+        // 步骤2.2 添加PointXYZ顶点
         g2o::VertexSBAPointXYZ *vPoint1 = new g2o::VertexSBAPointXYZ();
         cv::Mat P3D1w                   = pMP1->GetWorldPos();
         cv::Mat P3D1c                   = R1w * P3D1w + t1w;
@@ -1232,10 +1267,11 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
     nCorrespondences++;
 
     // Set edge x1 = S12*X2
+    // Set edge x1 = S12*X2
     Eigen::Matrix<double, 2, 1> obs1;
     const cv::KeyPoint &kpUn1 = pKF1->mvKeysUn[i];
     obs1 << kpUn1.pt.x, kpUn1.pt.y;
-
+    // 步骤2.3 添加两个顶点（3D点）到相机投影的边
     g2o::EdgeSim3ProjectXYZ *e12 = new g2o::EdgeSim3ProjectXYZ();
     e12->setVertex(0, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(id2)));
     e12->setVertex(1, dynamic_cast<g2o::OptimizableGraph::Vertex *>(optimizer.vertex(0)));
@@ -1272,10 +1308,13 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
   }
 
   // Optimize!
+  // 步骤3：g2o开始优化，先迭代5次
   optimizer.initializeOptimization();
   optimizer.optimize(5);
 
+  // 步骤4：剔除一些误差大的边
   // Check inliers
+  // 进行卡方检验，大于阈值的边剔除
   int nBad = 0;
   for (size_t i = 0; i < vpEdges12.size(); i++) {
     g2o::EdgeSim3ProjectXYZ *e12        = vpEdges12[i];
@@ -1304,7 +1343,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
     return 0;
 
   // Optimize again only with inliers
-
+  // 步骤5：再次g2o优化剔除后剩下的边
   optimizer.initializeOptimization();
   optimizer.optimize(nMoreIterations);
 
@@ -1323,6 +1362,7 @@ int Optimizer::OptimizeSim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
   }
 
   // Recover optimized Sim3
+  // 步骤6：得到优化后的结果
   g2o::VertexSim3Expmap *vSim3_recov = static_cast<g2o::VertexSim3Expmap *>(optimizer.vertex(0));
   g2oS12                             = vSim3_recov->estimate();
 

@@ -55,7 +55,7 @@ class Sim3Solver {
  protected:
   // KeyFrames and matches
   KeyFrame *mpKF1;
-  // KeyFrame* mpKF2;
+  KeyFrame *mpKF2;
 
   std::vector<cv::Mat> mvX3Dc1;
   std::vector<cv::Mat> mvX3Dc2;

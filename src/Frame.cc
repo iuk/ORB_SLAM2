@@ -328,6 +328,7 @@ void Frame::UpdatePoseMatrices() {
   mOw = -mRcw.t() * mtcw;
 }
 
+// Frustum ：平截头体 
 bool Frame::isInFrustum(MapPoint *pMP, float viewingCosLimit) {
   pMP->mbTrackInView = false;
 

@@ -275,7 +275,7 @@ void LocalMapping::CreateNewMapPoints() {
 
   // Search matches with epipolar restriction and triangulate
   // 步骤2：遍历相邻关键帧vpNeighKFs
-  // 遍历共视关键帧
+  // 遍历n个最佳共视关键帧
   for (size_t i = 0; i < vpNeighKFs.size(); i++) {
     if (i > 0 && CheckNewKeyFrames())
       return;
@@ -510,8 +510,8 @@ void LocalMapping::CreateNewMapPoints() {
       mlpRecentAddedMapPoints.push_back(pMP);
 
       nnew++;
-    }
-  }
+    } // 完成三角化
+  } // 结束 遍历 n 个最佳共视帧
 }
 
 /**
@@ -524,9 +524,14 @@ void LocalMapping::SearchInNeighbors() {
   int nn = 10;
   if (mbMonocular)
     nn = 20;
+
+  // 获取n 个共视帧
   const vector<KeyFrame *> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(nn);
 
+  // 目标关键帧为 当前帧的 n 个共视帧(一级) 及 共视帧的前5名的共视帧(二级)
   vector<KeyFrame *> vpTargetKFs;
+
+  // 遍历 n 个共视帧
   for (vector<KeyFrame *>::const_iterator vit = vpNeighKFs.begin(), vend = vpNeighKFs.end(); vit != vend; vit++) {
     KeyFrame *pKFi = *vit;
     if (pKFi->isBad() || pKFi->mnFuseTargetForKF == mpCurrentKeyFrame->mnId)
@@ -549,6 +554,7 @@ void LocalMapping::SearchInNeighbors() {
 
   // 步骤2：将当前帧的MapPoints分别与一级二级相邻帧(的MapPoints)进行融合
   vector<MapPoint *> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
+  // 遍历目标关键帧组
   for (vector<KeyFrame *>::iterator vit = vpTargetKFs.begin(), vend = vpTargetKFs.end(); vit != vend; vit++) {
     KeyFrame *pKFi = *vit;
 
@@ -761,6 +767,7 @@ void LocalMapping::KeyFrameCulling() {
   }
 }
 
+// 反对称矩阵
 cv::Mat LocalMapping::SkewSymmetricMatrix(const cv::Mat &v) {
   return (cv::Mat_<float>(3, 3) << 0, -v.at<float>(2), v.at<float>(1),
           v.at<float>(2), 0, -v.at<float>(0),

@@ -246,11 +246,13 @@ bool LoopClosing::ComputeSim3() {
   vector<vector<MapPoint*> > vvpMapPointMatches;
   vvpMapPointMatches.resize(nInitialCandidates);
 
+  // 用于标记当前候选关键帧是否丢弃
   vector<bool> vbDiscarded;
   vbDiscarded.resize(nInitialCandidates);
 
   int nCandidates = 0;  //candidates with enough matches
 
+  // 遍历闭环候选关键帧
   for (int i = 0; i < nInitialCandidates; i++) {
     // 步骤1：从筛选的闭环候选帧中取出一帧关键帧pKF
     KeyFrame* pKF = mvpEnoughConsistentCandidates[i];
@@ -259,6 +261,7 @@ bool LoopClosing::ComputeSim3() {
     // 防止在LocalMapping中KeyFrameCulling函数将此关键帧作为冗余帧剔除
     pKF->SetNotErase();
 
+    // 候选帧是 bad 则丢弃
     if (pKF->isBad()) {
       vbDiscarded[i] = true;  // 直接将该候选帧舍弃
       continue;
@@ -266,23 +269,30 @@ bool LoopClosing::ComputeSim3() {
 
     // 步骤2：将当前帧mpCurrentKF与闭环候选关键帧pKF匹配
     // 通过bow加速得到mpCurrentKF与pKF之间的匹配特征点，vvpMapPointMatches是匹配特征点对应的MapPoints
+    // vvpMapPointMatches 返回 当前帧 中的 2d 特征点匹配的 候选帧 的 3D MapPoints
     int nmatches = matcher.SearchByBoW(mpCurrentKF, pKF, vvpMapPointMatches[i]);
 
     // 匹配的特征点数太少，该候选帧剔除
+    // 当前帧 与 候选帧 匹配的2D特征点太少，则丢弃
     if (nmatches < 20) {
       vbDiscarded[i] = true;
       continue;
-    } else {
+    }
+    // 否则构造一个 sim3 问题，这时还不去求解
+    else {
       // if bFixScale is true, 6DoF optimization (stereo,rgbd), 7DoF otherwise (mono)
       // 构造Sim3求解器
       // 如果mbFixScale为true，则是6DoFf优化（双目 RGBD），如果是false，则是7DoF优化（单目）
-      Sim3Solver* pSolver = new Sim3Solver(mpCurrentKF, pKF, vvpMapPointMatches[i], mbFixScale);
+      Sim3Solver* pSolver = new Sim3Solver(mpCurrentKF,
+                                           pKF,
+                                           vvpMapPointMatches[i],
+                                           mbFixScale);
       pSolver->SetRansacParameters(0.99, 20, 300);
       vpSim3Solvers[i] = pSolver;
     }
     // 参与Sim3计算的候选关键帧数加1
     nCandidates++;
-  }
+  } // 完成遍历闭环候选关键帧
 
   // 用于标记是否有一个候选帧通过Sim3的求解与优化
   bool bMatch = false;
@@ -292,7 +302,9 @@ bool LoopClosing::ComputeSim3() {
   // 一直循环所有的候选帧，每个候选帧迭代5次，如果5次迭代后得不到结果，就换下一个候选帧
   // 直到有一个候选帧首次迭代成功bMatch为true，或者某个候选帧总的迭代次数超过限制，直接将它剔除
   while (nCandidates > 0 && !bMatch) {
+    // 遍历 n 个闭环候选帧
     for (int i = 0; i < nInitialCandidates; i++) {
+      // 如果被舍弃，则跳过
       if (vbDiscarded[i])
         continue;
 
@@ -305,19 +317,23 @@ bool LoopClosing::ComputeSim3() {
 
       // 步骤3：对步骤2中有较好的匹配的关键帧求取Sim3变换
       Sim3Solver* pSolver = vpSim3Solvers[i];
+      // 对 sim3 问题进行求解
       // 最多迭代5次，返回的Scm是候选帧pKF到当前帧mpCurrentKF的Sim3变换（T12）
       cv::Mat Scm = pSolver->iterate(5, bNoMore, vbInliers, nInliers);
 
       // If Ransac reachs max. iterations discard keyframe
       // 经过n次循环，每次迭代5次，总共迭代 n*5 次
       // 总迭代次数达到最大限制还没有求出合格的Sim3变换，该候选帧剔除
+      // 没有求解出合格的 sim3 变换，则舍弃
       if (bNoMore) {
         // 保存inlier的MapPoint
         vbDiscarded[i] = true;
         nCandidates--;
       }
 
-      // If RANSAC returns a Sim3, perform a guided matching and optimize with all correspondences
+      // If RANSAC returns a Sim3, 
+      // perform a guided matching and optimize with all correspondences
+      // 如果得到了一个 sim3 变换
       if (!Scm.empty()) {
         vector<MapPoint*> vpMapPointMatches(vvpMapPointMatches[i].size(), static_cast<MapPoint*>(NULL));
         for (size_t j = 0, jend = vbInliers.size(); j < jend; j++) {
@@ -357,9 +373,10 @@ bool LoopClosing::ComputeSim3() {
           // 只要有一个候选帧通过Sim3的求解与优化，就跳出停止对其它候选帧的判断
           break;
         }
-      }
-    }
-  }
+      } // if 得到了一个 sim3 变换
+    } // for 遍历 n 个闭环候选帧
+  } // while 还没找到 sim3
+
   // 没有一个闭环匹配候选帧通过Sim3的求解与优化
   if (!bMatch) {
     // 清空mvpEnoughConsistentCandidates
@@ -368,6 +385,7 @@ bool LoopClosing::ComputeSim3() {
     mpCurrentKF->SetErase();
     return false;
   }
+  // 否则表示已经寻找到一个 闭环匹配帧
 
   // Retrieve MapPoints seen in Loop Keyframe and neighbors
   // 步骤6：取出闭环匹配上关键帧的相连关键帧，得到它们的MapPoints放入mvpLoopMapPoints
@@ -378,9 +396,12 @@ bool LoopClosing::ComputeSim3() {
   // 包含闭环匹配关键帧本身
   vpLoopConnectedKFs.push_back(mpMatchedKF);
   mvpLoopMapPoints.clear();
-  for (vector<KeyFrame*>::iterator vit = vpLoopConnectedKFs.begin(); vit != vpLoopConnectedKFs.end(); vit++) {
+  // for 遍历闭环匹配帧的所有共视帧
+  for (vector<KeyFrame*>::iterator vit = vpLoopConnectedKFs.begin();
+       vit != vpLoopConnectedKFs.end(); vit++) {
     KeyFrame* pKF                 = *vit;
     vector<MapPoint*> vpMapPoints = pKF->GetMapPointMatches();
+    // for 遍历共视帧所有的 MapPoints
     for (size_t i = 0, iend = vpMapPoints.size(); i < iend; i++) {
       MapPoint* pMP = vpMapPoints[i];
       if (pMP) {
@@ -390,8 +411,8 @@ bool LoopClosing::ComputeSim3() {
           pMP->mnLoopPointForKF = mpCurrentKF->mnId;
         }
       }
-    }
-  }
+    } // for 遍历共视帧所有的 MapPoints
+  } // for 遍历所有共视帧
 
   // Find more matches projecting with the computed Sim3
   // 步骤7：将闭环匹配上关键帧以及相连关键帧的MapPoints投影到当前关键帧进行投影匹配
@@ -480,6 +501,7 @@ void LoopClosing::CorrectLoop() {
     // Get Map Mutex
     unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
     // 步骤2.1：通过位姿传播，得到Sim3调整后其它与当前帧相连关键帧的位姿（只是得到，还没有修正）
+    // 遍历当前帧的所有共视帧
     for (vector<KeyFrame*>::iterator vit = mvpCurrentConnectedKFs.begin(), vend = mvpCurrentConnectedKFs.end(); vit != vend; vit++) {
       KeyFrame* pKFi = *vit;
 

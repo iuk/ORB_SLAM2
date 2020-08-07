@@ -30,7 +30,14 @@
 
 namespace ORB_SLAM2 {
 
-Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> &vpMatched12, const bool bFixScale) : mnIterations(0), mnBestInliers(0), mbFixScale(bFixScale) {
+// 构造一个 sim求解问题
+Sim3Solver::Sim3Solver(KeyFrame *pKF1,
+                       KeyFrame *pKF2,
+                       const vector<MapPoint *> &vpMatched12,
+                       const bool bFixScale)
+    : mnIterations(0),
+      mnBestInliers(0),
+      mbFixScale(bFixScale) {
   mpKF1 = pKF1;
   mpKF2 = pKF2;
 
@@ -53,8 +60,11 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
   mvAllIndices.reserve(mN1);
 
   size_t idx = 0;
+  // mN1为pKF2特征点的个数
   for (int i1 = 0; i1 < mN1; i1++) {
+    // 如果该特征点在pKF1中有匹配
     if (vpMatched12[i1]) {
+      // step1: 根据vpMatched12配对比配的MapPoint： pMP1和pMP2
       MapPoint *pMP1 = vpKeyFrameMP1[i1];
       MapPoint *pMP2 = vpMatched12[i1];
 
@@ -63,26 +73,28 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
 
       if (pMP1->isBad() || pMP2->isBad())
         continue;
-
+      // step2：计算允许的重投影误差阈值：mvnMaxError1和mvnMaxError2
+      // 注：是相对当前位姿投影3D点得到的图像坐标，见step6
+      // step2.1：根据匹配的MapPoint找到对应匹配特征点的索引：indexKF1和indexKF2
       int indexKF1 = pMP1->GetIndexInKeyFrame(pKF1);
       int indexKF2 = pMP2->GetIndexInKeyFrame(pKF2);
 
       if (indexKF1 < 0 || indexKF2 < 0)
         continue;
-
+      // step2.2：取出匹配特征点的引用：kp1和kp2
       const cv::KeyPoint &kp1 = pKF1->mvKeysUn[indexKF1];
       const cv::KeyPoint &kp2 = pKF2->mvKeysUn[indexKF2];
-
+      // step2.3：根据特征点的尺度计算对应的误差阈值：mvnMaxError1和mvnMaxError2
       const float sigmaSquare1 = pKF1->mvLevelSigma2[kp1.octave];
       const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
 
       mvnMaxError1.push_back(9.210 * sigmaSquare1);
       mvnMaxError2.push_back(9.210 * sigmaSquare2);
-
+      // mvpMapPoints1和mvpMapPoints2是匹配的MapPoints容器
       mvpMapPoints1.push_back(pMP1);
       mvpMapPoints2.push_back(pMP2);
       mvnIndices1.push_back(i1);
-
+      // step4：将MapPoint从世界坐标系变换到相机坐标系：mvX3Dc1和mvX3Dc2
       cv::Mat X3D1w = pMP1->GetWorldPos();
       mvX3Dc1.push_back(Rcw1 * X3D1w + tcw1);
 
@@ -93,10 +105,10 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
       idx++;
     }
   }
-
+  // step5：两个关键帧的内参
   mK1 = pKF1->mK;
   mK2 = pKF2->mK;
-
+  // step6：记录计算两针Sim3之前3D mappoint在图像上的投影坐标：mvP1im1和mvP2im2
   FromCameraToImage(mvX3Dc1, mvP1im1, mK1);
   FromCameraToImage(mvX3Dc2, mvP2im2, mK2);
 
@@ -130,7 +142,10 @@ void Sim3Solver::SetRansacParameters(double probability, int minInliers, int max
 
 // Ransac求解mvX3Dc1和mvX3Dc2之间Sim3，函数返回mvX3Dc2到mvX3Dc1的Sim3变换
 // sim3 是一个4x4相似变换矩阵
-cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers) {
+cv::Mat Sim3Solver::iterate(int nIterations,
+                            bool &bNoMore,
+                            vector<bool> &vbInliers,
+                            int &nInliers) {
   bNoMore   = false;
   vbInliers = vector<bool>(mN1, false);
   nInliers  = 0;
@@ -146,6 +161,7 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
   cv::Mat P3Dc2i(3, 3, CV_32F);
 
   int nCurrentIterations = 0;
+  // 还没有到达最大迭代次数
   while (mnIterations < mRansacMaxIts && nCurrentIterations < nIterations) {
     nCurrentIterations++;
     mnIterations++;
@@ -163,6 +179,7 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
       // x1 x2 x3 ...
       // y1 y2 y3 ...
       // z1 z2 z3 ...
+      // mvX3Dc1 储存3D点在 Frame1 系下的 坐标
       mvX3Dc1[idx].copyTo(P3Dc1i.col(i));
       mvX3Dc2[idx].copyTo(P3Dc2i.col(i));
 
@@ -188,11 +205,12 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
         for (int i = 0; i < N; i++)
           if (mvbInliersi[i])
             vbInliers[mvnIndices1[i]] = true;
-        // ！！！！！note: 1. 只要计算得到一次合格的Sim变换，就直接返回 2. 没有对所有的inlier进行一次refine操作
+        // ！！！！！note: 1. 只要计算得到一次合格的Sim变换，就直接返回 
+        // 2. 没有对所有的inlier进行一次refine操作
         return mBestT12;
       }
     }
-  }
+  } // while 还没有到达最大迭代次数
 
   if (mnIterations >= mRansacMaxIts)
     bNoMore = true;
@@ -327,7 +345,9 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2) {
 
 void Sim3Solver::CheckInliers() {
   vector<cv::Mat> vP1im2, vP2im1;
+  // 把2系中的3D经过Sim3变换(mT12i)到1系中计算重投影坐标
   Project(mvX3Dc2, vP2im1, mT12i, mK1);
+  // 把1系中的3D经过Sim3变换(mT21i)到2系中计算重投影坐标
   Project(mvX3Dc1, vP1im2, mT21i, mK2);
 
   mnInliersi = 0;
@@ -359,7 +379,10 @@ float Sim3Solver::GetEstimatedScale() {
   return mBestScale;
 }
 
-void Sim3Solver::Project(const vector<cv::Mat> &vP3Dw, vector<cv::Mat> &vP2D, cv::Mat Tcw, cv::Mat K) {
+void Sim3Solver::Project(const vector<cv::Mat> &vP3Dw,
+                         vector<cv::Mat> &vP2D,
+                         cv::Mat Tcw,
+                         cv::Mat K) {
   cv::Mat Rcw     = Tcw.rowRange(0, 3).colRange(0, 3);
   cv::Mat tcw     = Tcw.rowRange(0, 3).col(3);
   const float &fx = K.at<float>(0, 0);
