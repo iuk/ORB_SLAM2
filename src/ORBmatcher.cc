@@ -1061,6 +1061,8 @@ int ORBmatcher::Fuse(KeyFrame *pKF,
   return nFused;
 }
 
+// 投影MapPoints（用Sim3: Scw参数）到KeyFrame中，并判断是否有重复的MapPoints
+// Scw为世界坐标系到pKF机体坐标系的Sim3变换，用于将世界坐标系下的vpPoints变换到机体坐标系
 int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint) {
   // Get Calibration Parameters for later projection
   const float &fx = pKF->fx;
@@ -1069,6 +1071,7 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
   const float &cy = pKF->cy;
 
   // Decompose Scw
+      // 将Sim3转化为SE3并分解
   cv::Mat sRcw    = Scw.rowRange(0, 3).colRange(0, 3);
   const float scw = sqrt(sRcw.row(0).dot(sRcw.row(0)));
   cv::Mat Rcw     = sRcw / scw;
@@ -1083,6 +1086,7 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
   const int nPoints = vpPoints.size();
 
   // For each candidate MapPoint project and match
+  // 遍历所有的MapPoints
   for (int iMP = 0; iMP < nPoints; iMP++) {
     MapPoint *pMP = vpPoints[iMP];
 
@@ -1106,13 +1110,15 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
     const float y    = p3Dc.at<float>(1) * invz;
 
     const float u = fx * x + cx;
-    const float v = fy * y + cy;
+    const float v = fy * y + cy;// 步骤1：得到MapPoint在图像上的投影坐标
 
     // Point must be inside the image
+
     if (!pKF->IsInImage(u, v))
       continue;
 
     // Depth must be inside the scale pyramid of the image
+    // 根据距离是否在图像合理金字塔尺度范围内和观测角度是否小于60度判断该MapPoint是否正常
     const float maxDistance = pMP->GetMaxDistanceInvariance();
     const float minDistance = pMP->GetMinDistanceInvariance();
     cv::Mat PO              = p3Dw - Ow;
@@ -1131,8 +1137,9 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
     const int nPredictedLevel = pMP->PredictScale(dist3D, pKF);
 
     // Search in a radius
+    // 计算搜索范围
     const float radius = th * pKF->mvScaleFactors[nPredictedLevel];
-
+    // 收集pKF在该区域内的特征点
     const vector<size_t> vIndices = pKF->GetFeaturesInArea(u, v, radius);
 
     if (vIndices.empty())
@@ -1164,10 +1171,14 @@ int ORBmatcher::Fuse(KeyFrame *pKF, cv::Mat Scw, const vector<MapPoint *> &vpPoi
     // If there is already a MapPoint replace otherwise add new measurement
     if (bestDist <= TH_LOW) {
       MapPoint *pMPinKF = pKF->GetMapPoint(bestIdx);
+      // 如果这个MapPoint已经存在，则替换，
+      // 这里不能轻易替换（因为MapPoint一般会被很多帧都可以观测到），这里先记录下来，之后调用Replace函数来替换
       if (pMPinKF) {
         if (!pMPinKF->isBad())
-          vpReplacePoint[iMP] = pMPinKF;
-      } else {
+          vpReplacePoint[iMP] = pMPinKF;// 记录下来该pMPinKF需要被替换掉
+      }
+      // 如果这个MapPoint不存在，直接添加
+      else {
         pMP->AddObservation(pKF, bestIdx);
         pKF->AddMapPoint(pMP, bestIdx);
       }
